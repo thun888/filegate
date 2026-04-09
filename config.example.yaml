@@ -1,0 +1,131 @@
+backends:
+  - name: "backend1"
+    type: "http" # fs, s3, http
+    # 接口 + registry 加载
+    config:
+      # http 专用
+      url_prefix: "http://localhost:8080"
+      extra_headers:
+        X-Example-Header: "example-value"
+
+      # s3 专用，bucket默认使用路径方式访问
+      endpoint: "s3.amazonaws.com"
+      bucket: "my-bucket"
+      access_key: ""
+      secret_key: ""
+
+      # fs 专用
+      root_path: "/data/backups"
+
+    # 公共配置
+    timeout: 5s
+    retries: 3
+    retry_delay: 1s
+    circuit_breaker:
+      failure_threshold: 5
+      recovery_timeout: 30s
+      half_open_timeout: 10s
+
+backend_policy:
+  - name: "policy1" # single | fallback | round_robin | random | priority
+    strategy: fallback
+    backends:
+      - backend1
+      - backend2
+
+# 对应路径：http://localhost:8080/fs/{namespace}/{class}/{path}.jpg@{width}w_{height}h_{crop}_{quality}.{format}
+# crop: 1c 中心裁切  0c（或省略）不裁切 结合width和height参数使用
+namespaces:
+  - name: "namespace1"
+    backend_policy: "policy1"
+    class:
+      - name: "class1"
+        security:
+          # 来源头检查
+          refer_check:
+            enabled: true
+            allowed_referers:
+              - "http://example.com"
+              - "http://another.com"
+          signature:
+            enabled: true
+            secret: "xxxx"
+            # sign = HMAC_SHA256(canonical_string + exp + secret) => ?exp=1710000000&sign=xxx
+            # canonical_string =
+            # METHOD
+            # PATH
+            # QUERY
+            # EXPIRE
+            # exp: 过期时间，单位秒
+            expire: 300
+          # 访问频率限制
+          limit:
+            enabled: true
+            max_requests: 100
+            window: 1m
+          path_filter:
+            deny_patterns:
+              - "../"
+              - ".git"
+            allow_paths:
+              - images/
+              - avatars/
+            allow_extensions:
+              - jpg
+              - jpeg
+              - png
+              - webp
+        # 文件处理
+        file_conversion:
+          enabled: true
+          rule: "png_conversion" 
+        # 响应头设置
+        response_headers:
+          Cache-Control: "public,max-age=3600"
+          Access-Control-Allow-Origin: "*"
+
+file_conversion_rules:
+  - name: "png_conversion"
+    max_file_size: "100MB"
+    supported_formats:
+      - "png"
+    enable_request_params:
+      width:
+        min: 1
+        max: 8192
+      height:
+        min: 1
+        max: 8192
+      quality:
+        min: 10
+        max: 95
+      crop: true
+      format: true
+      zip: true
+    default_params:
+      width: 800
+      height: 600
+      crop: "center"
+      quality: 80
+      format: "png"
+      zip: false
+    watermark:
+      enabled: true
+      position: "bottom-right"
+      opacity: 0.5
+
+
+
+system: 
+  server:
+    host: 127.0.0.1
+    port: 8080
+    
+  logging:
+    level: info
+    access_log: true
+
+  metrics:
+    prometheus: true
+    labels:
+      service: filegate
