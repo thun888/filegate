@@ -1,0 +1,146 @@
+package server
+
+import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+
+	"filegate/config"
+)
+
+func TestBuildPathFilterIndex_PrecompileOnStartup(t *testing.T) {
+	cfg := &config.Config{
+		Namespaces: []config.NamespaceConfig{
+			{
+				Name: "ns1",
+				Class: []config.ClassConfig{
+					{
+						Name: "img",
+						Security: config.SecurityConfig{
+							PathFilter: config.PathFilterConfig{
+								DenyPatterns: []string{"^private/"},
+							},
+						},
+					},
+					{
+						Name: "doc",
+						Security: config.SecurityConfig{
+							PathFilter: config.PathFilterConfig{
+								DenyPatterns: []string{"\\.tmp$"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	filters, err := buildPathFilterIndex(cfg)
+	if err != nil {
+		t.Fatalf("buildPathFilterIndex() error = %v", err)
+	}
+
+	if got := len(filters); got != 2 {
+		t.Fatalf("len(filters) = %d, want 2", got)
+	}
+
+	imgFilter, ok := filters["ns1:img"]
+	if !ok {
+		t.Fatalf("missing precompiled filter for ns1:img")
+	}
+
+	if err = imgFilter.Validate("private/a.jpg"); err == nil {
+		t.Fatalf("expected deny pattern to block private path")
+	}
+
+	if err = imgFilter.Validate("public/a.jpg"); err != nil {
+		t.Fatalf("expected public path allowed, got %v", err)
+	}
+}
+
+func TestErrorImageName(t *testing.T) {
+	tests := []struct {
+		statusCode int
+		want       string
+	}{
+		{statusCode: http.StatusNotFound, want: "404.png"},
+		{statusCode: http.StatusUnauthorized, want: "400.png"},
+		{statusCode: http.StatusTooManyRequests, want: "400.png"},
+		{statusCode: http.StatusBadGateway, want: "500.png"},
+		{statusCode: http.StatusServiceUnavailable, want: "500.png"},
+		{statusCode: http.StatusCreated, want: ""},
+	}
+
+	for _, tt := range tests {
+		if got := errorImageName(tt.statusCode); got != tt.want {
+			t.Fatalf("errorImageName(%d) = %q, want %q", tt.statusCode, got, tt.want)
+		}
+	}
+}
+
+func TestAbortWithError_ReturnsImageAndNoCache(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/missing", nil)
+
+	abortWithError(c, http.StatusNotFound, errors.New("not found"))
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+
+	contentType := w.Header().Get("Content-Type")
+	if !strings.HasPrefix(contentType, "image/png") {
+		t.Fatalf("content-type = %q, want image/png", contentType)
+	}
+
+	if got := w.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate, max-age=0" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	if got := w.Header().Get("Pragma"); got != "no-cache" {
+		t.Fatalf("Pragma = %q", got)
+	}
+	if got := w.Header().Get("Expires"); got != "0" {
+		t.Fatalf("Expires = %q", got)
+	}
+
+	body := w.Body.Bytes()
+	if len(body) < 8 {
+		t.Fatalf("response body too short for png: %d", len(body))
+	}
+
+	pngMagic := []byte{0x89, 'P', 'N', 'G'}
+	for i := range pngMagic {
+		if body[i] != pngMagic[i] {
+			t.Fatalf("response body is not png")
+		}
+	}
+}
+
+func TestAbortWithError_HEADNoBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodHead, "/limited", nil)
+
+	abortWithError(c, http.StatusTooManyRequests, errors.New("too many requests"))
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusTooManyRequests)
+	}
+
+	if w.Body.Len() != 0 {
+		t.Fatalf("head response should be empty body, got %d bytes", w.Body.Len())
+	}
+
+	if got := w.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate, max-age=0" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+}

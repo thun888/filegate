@@ -1,0 +1,1 @@
+go build -o filegate.exe ./cmd/filegate
