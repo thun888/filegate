@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FileGate · 项目运行流程全解析</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        
+        :root {
+            --dark-bg: #0D1117;
+            --dark-secondary: #161B22;
+            --dark-tertiary: #21262D;
+            --accent-cyan: #00D9FF;
+            --accent-teal: #2DD4BF;
+            --accent-blue: #60A5FA;
+            --accent-purple: #A78BFA;
+            --accent-orange: #F97316;
+            --accent-green: #34D399;
+            --accent-red: #EF4444;
+            --text-primary: #E6EDF3;
+            --text-secondary: #8B949E;
+            --text-muted: #6E7681;
+            --glow-cyan: rgba(0, 217, 255, 0.3);
+            --glow-teal: rgba(45, 212, 191, 0.25);
+            --glow-purple: rgba(167, 139, 250, 0.25);
+            --glow-blue: rgba(96, 165, 250, 0.25);
+        }
+        
+        body {
+            font-family: 'Noto Sans SC', sans-serif;
+            background: var(--dark-bg);
+            color: var(--text-primary);
+            overflow: hidden;
+            width: 100vw; height: 100vh;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        /* ============ Background Grid ============ */
+        .bg-grid {
+            position: absolute; inset:0;
+            background-image: 
+                linear-gradient(rgba(0,217,255,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,217,255,0.03) 1px, transparent 1px);
+            background-size: 60px 60px;
+            pointer-events: none;
+        }
+        
+        .glow-orb {
+            position: absolute; border-radius: 50%;
+            filter: blur(80px); opacity: 0.15;
+            pointer-events: none;
+            animation: orbFloat 8s ease-in-out infinite alternate;
+        }
+        @keyframes orbFloat {
+            0% { transform: translate(0, 0) scale(1); }
+            100% { transform: translate(30px, -30px) scale(1.1); }
+        }
+
+        /* ============ Slide Container ============ */
+        .deck { position: relative; width:100%; height:100%; }
+        .slide {
+            position: absolute; inset:0;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            padding: 50px 80px;
+            opacity: 0; pointer-events: none;
+            transition: opacity .5s ease;
+            background: radial-gradient(ellipse at 50% 30%, var(--dark-secondary) 0%, var(--dark-bg) 100%);
+            overflow: hidden;
+        }
+        .slide.active { opacity:1; pointer-events:auto; }
+        .slide .an { transition-delay: 0s; }
+
+        /* ============ Stagger entrance ============ */
+        .slide .an {
+            opacity: 0;
+            transform: translateY(38px);
+            transition: opacity .65s cubic-bezier(.23,1,.32,1), transform .65s cubic-bezier(.23,1,.32,1);
+        }
+        .slide.active .an.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* ============ Typography ============ */
+        .title-lg { font-size: 58px; font-weight:800; line-height:1.25; color:var(--text-primary); }
+        .title-md { font-size: 46px; font-weight:700; line-height:1.3; color:var(--text-primary); }
+        .title-sm { font-size: 36px; font-weight:700; line-height:1.3; color:var(--text-primary); }
+        .subtitle { font-size: 26px; font-weight:400; color:var(--text-secondary); line-height:1.5; }
+        .text-xl { font-size: 28px; line-height:1.7; color:var(--text-primary); }
+        .text-lg { font-size: 22px; line-height:1.6; color:var(--text-secondary); }
+
+        .hl-cyan { color:var(--accent-cyan); font-weight:700; }
+        .hl-teal { color:var(--accent-teal); font-weight:700; }
+        .hl-blue { color:var(--accent-blue); font-weight:700; }
+        .hl-purple { color:var(--accent-purple); font-weight:700; }
+        .hl-orange { color:var(--accent-orange); font-weight:700; }
+        .hl-green { color:var(--accent-green); font-weight:700; }
+        .hl-red { color:var(--accent-red); font-weight:700; }
+
+        .hl-bg { background:rgba(0,217,255,0.12); padding:2px 12px; border-radius:6px; border:1px solid rgba(0,217,255,0.2); }
+        .hl-bg2 { background:rgba(45,212,191,0.12); padding:2px 12px; border-radius:6px; border:1px solid rgba(45,212,191,0.2); }
+        .hl-bg-purple { background:rgba(167,139,250,0.12); padding:2px 12px; border-radius:6px; border:1px solid rgba(167,139,250,0.2); }
+        .hl-bg-green { background:rgba(52,211,153,0.12); padding:2px 12px; border-radius:6px; border:1px solid rgba(52,211,153,0.2); }
+        .hl-bg-orange { background:rgba(249,115,22,0.12); padding:2px 12px; border-radius:6px; border:1px solid rgba(249,115,22,0.2); }
+        .hl-underline { text-decoration: underline; text-decoration-color:var(--accent-cyan); text-underline-offset:6px; text-decoration-thickness:3px; }
+        .hl-italic { font-style:italic; }
+
+        .tag {
+            display:inline-flex; align-items:center; gap:8px;
+            background:rgba(0,217,255,0.1); color:var(--accent-cyan); font-size:20px; font-weight:600;
+            padding:8px 22px; border-radius:24px; border:1.5px solid rgba(0,217,255,0.25);
+            backdrop-filter: blur(10px);
+        }
+
+        .divider {
+            width:80px; height:4px; border-radius:2px;
+            background: linear-gradient(90deg,var(--accent-cyan),var(--accent-teal));
+            margin:16px 0;
+        }
+
+        .badge {
+            display:inline-flex; align-items:center; gap:8px;
+            background: linear-gradient(135deg,rgba(0,217,255,0.2),rgba(45,212,191,0.15));
+            color:var(--accent-cyan); font-size:22px; font-weight:700;
+            padding:10px 28px; border-radius:30px;
+            border: 1px solid rgba(0,217,255,0.3);
+            box-shadow: 0 4px 18px var(--glow-cyan);
+        }
+
+        /* ============ Slide 1 - Title ============ */
+        .slide-1 { background: radial-gradient(ellipse at 50% 30%, #1a1a2e 0%, var(--dark-bg) 100%); }
+        .slide-1 .glow-orb-1 {
+            width: 500px; height: 500px;
+            background: var(--accent-cyan);
+            top: -150px; right: -100px;
+        }
+        .slide-1 .glow-orb-2 {
+            width: 400px; height: 400px;
+            background: var(--accent-purple);
+            bottom: -120px; left: -60px;
+            animation-delay: -4s;
+        }
+
+        .hero-visual {
+            position: relative;
+            width: 600px; height: 240px;
+            margin: 16px auto 0;
+        }
+        .hero-window {
+            position: absolute;
+            background: var(--dark-tertiary);
+            border-radius: 14px;
+            border: 2px solid rgba(0,217,255,0.15);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            overflow: hidden;
+        }
+        .hero-window .win-bar {
+            height: 28px; background: var(--dark-secondary);
+            display: flex; align-items: center; padding: 0 10px; gap: 6px;
+            border-bottom: 1px solid rgba(0,217,255,0.1);
+        }
+        .hero-window .win-bar span {
+            width: 10px; height: 10px; border-radius: 50%;
+        }
+        .hero-window .win-body {
+            padding: 14px 16px;
+        }
+        .hero-window .win-line {
+            height: 8px; border-radius: 4px; margin-bottom: 8px;
+        }
+        .hero-w1 { width: 280px; top: 0; left: 0; z-index: 3; }
+        .hero-w2 { width: 250px; top: 30px; left: 170px; z-index: 2; opacity:.85; }
+        .hero-w3 { width: 220px; top: 60px; left: 320px; z-index: 1; opacity:.65; }
+        .hero-gear {
+            position: absolute;
+            bottom: 5px; left: 50%;
+            transform: translateX(-50%);
+            animation: spin 12s linear infinite;
+        }
+        @keyframes spin { from{transform:translateX(-50%) rotate(0deg)} to{transform:translateX(-50%) rotate(360deg)} }
+
+        .float-particle {
+            position: absolute; border-radius: 50%; opacity: .2;
+            background: var(--accent-cyan);
+            animation: floatUp 6s ease-in-out infinite;
+            box-shadow: 0 0 20px var(--accent-cyan);
+        }
+        @keyframes floatUp {
+            0%,100% { transform: translateY(0) scale(1); opacity:.2; }
+            50% { transform: translateY(-20px) scale(1.2); opacity:.35; }
+        }
+
+        /* ============ Slide 2 - Architecture ============ */
+        .arch-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            max-width: 1100px;
+            width: 100%;
+            margin-top: 16px;
+        }
+        .arch-card {
+            background: var(--dark-tertiary);
+            border-radius: 18px;
+            padding: 24px 18px;
+            text-align: center;
+            border: 2px solid rgba(0,217,255,0.08);
+            transition: all .3s;
+            position: relative;
+            overflow: hidden;
+        }
+        .arch-card::before {
+            content:''; position:absolute; top:0; left:0; right:0;
+            height:4px;
+        }
+        .arch-card.c1::before { background: linear-gradient(90deg,var(--accent-cyan),var(--accent-teal)); }
+        .arch-card.c2::before { background: linear-gradient(90deg,var(--accent-teal),var(--accent-green)); }
+        .arch-card.c3::before { background: linear-gradient(90deg,var(--accent-blue),var(--accent-purple)); }
+        .arch-card.c4::before { background: linear-gradient(90deg,var(--accent-purple),var(--accent-orange)); }
+        .arch-card.c5::before { background: linear-gradient(90deg,var(--accent-orange),var(--accent-red)); }
+        .arch-card.c6::before { background: linear-gradient(90deg,var(--accent-green),var(--accent-cyan)); }
+        .arch-card:hover { transform:translateY(-4px); border-color:rgba(0,217,255,0.2); }
+        .arch-icon {
+            width: 60px; height: 60px; border-radius: 16px;
+            display: flex; align-items: center; justify-content: center;
+            margin: 0 auto 12px;
+        }
+        .arch-icon i { font-size: 28px; }
+        .arch-card .arch-name { font-size: 22px; font-weight:700; margin-bottom: 6px; }
+        .arch-card .arch-desc { font-size: 16px; color:var(--text-secondary); line-height:1.5; }
+
+        .arch-connector {
+            display: flex; align-items: center; justify-content: center;
+            position: relative;
+        }
+        .arch-connector .conn-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--accent-cyan);
+            animation: pulseDot 2s ease-in-out infinite;
+        }
+        @keyframes pulseDot {
+            0%,100% { opacity:.3; transform:scale(1); }
+            50% { opacity:.8; transform:scale(1.5); }
+        }
+
+        /* ============ Slide 3 - Startup Flow ============ */
+        .flow-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            width: 100%;
+            max-width: 1000px;
+        }
+        .flow-step {
+            display: flex;
+            align-items: stretch;
+            gap: 0;
+            background: var(--dark-tertiary);
+            border-radius: 14px;
+            border: 2px solid rgba(0,217,255,0.08);
+            overflow: hidden;
+            transition: all .3s;
+        }
+        .flow-step:hover { border-color: rgba(0,217,255,0.2); transform:translateX(4px); }
+        .flow-step .step-num {
+            display: flex; align-items: center; justify-content: center;
+            min-width: 70px;
+            font-size: 28px; font-weight: 900;
+        }
+        .flow-step .step-num.s1 { background: linear-gradient(180deg,rgba(0,217,255,0.2),transparent); color:var(--accent-cyan); }
+        .flow-step .step-num.s2 { background: linear-gradient(180deg,rgba(45,212,191,0.2),transparent); color:var(--accent-teal); }
+        .flow-step .step-num.s3 { background: linear-gradient(180deg,rgba(96,165,250,0.2),transparent); color:var(--accent-blue); }
+        .flow-step .step-num.s4 { background: linear-gradient(180deg,rgba(167,139,250,0.2),transparent); color:var(--accent-purple); }
+        .flow-step .step-num.s5 { background: linear-gradient(180deg,rgba(249,115,22,0.2),transparent); color:var(--accent-orange); }
+        .flow-step .step-content {
+            flex: 1;
+            padding: 18px 24px;
+        }
+        .flow-step .step-title {
+            font-size: 22px; font-weight:700;
+            margin-bottom: 4px;
+        }
+        .flow-step .step-desc {
+            font-size: 16px; color:var(--text-secondary);
+            line-height:1.5;
+        }
+        .flow-step .step-code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            background: rgba(0,0,0,0.3);
+            padding: 8px 12px;
+            border-radius: 8px;
+            margin-top: 6px;
+            color: var(--accent-teal);
+            overflow-x: auto;
+        }
+
+        /* ============ Slide 4 - Request Lifecycle ============ */
+        .lifecycle {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            width: 100%;
+            max-width: 1100px;
+        }
+        .lc-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            justify-content: center;
+        }
+        .lc-box {
+            padding: 14px 22px;
+            border-radius: 12px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 16px;
+            min-width: 140px;
+            border: 2px solid transparent;
+        }
+        .lc-box.incoming {
+            background: rgba(0,217,255,0.1);
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+        .lc-box.route {
+            background: rgba(45,212,191,0.1);
+            border-color: var(--accent-teal);
+            color: var(--accent-teal);
+        }
+        .lc-box.auth {
+            background: rgba(96,165,250,0.1);
+            border-color: var(--accent-blue);
+            color: var(--accent-blue);
+        }
+        .lc-box.limit {
+            background: rgba(167,139,250,0.1);
+            border-color: var(--accent-purple);
+            color: var(--accent-purple);
+        }
+        .lc-box.filter {
+            background: rgba(249,115,22,0.1);
+            border-color: var(--accent-orange);
+            color: var(--accent-orange);
+        }
+        .lc-box.parse {
+            background: rgba(52,211,153,0.1);
+            border-color: var(--accent-green);
+            color: var(--accent-green);
+        }
+        .lc-box.backend {
+            background: rgba(239,68,68,0.1);
+            border-color: var(--accent-red);
+            color: var(--accent-red);
+        }
+        .lc-box.response {
+            background: rgba(0,217,255,0.1);
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+        .lc-box.imgproxy-inner {
+            background: rgba(167,139,250,0.1);
+            border-color: var(--accent-purple);
+            color: var(--accent-purple);
+            font-size:14px;
+        }
+        .lc-arrow {
+            color: var(--text-muted);
+            font-size: 20px;
+            flex-shrink: 0;
+        }
+        .lc-branch {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            width: 100%;
+        }
+        .lc-branch .branch-box {
+            padding: 10px 18px;
+            border-radius: 10px;
+            font-size: 14px;
+            text-align: center;
+            font-weight: 600;
+        }
+        .lc-branch .branch-box.b1 {
+            background: rgba(52,211,153,0.1);
+            border: 2px solid var(--accent-green);
+            color: var(--accent-green);
+        }
+        .lc-branch .branch-box.b2 {
+            background: rgba(239,68,68,0.1);
+            border: 2px solid var(--accent-red);
+            color: var(--accent-red);
+        }
+
+        /* ============ Slide 5 - Policy Engine ============ */
+        .cb-states {
+            display: flex;
+            gap: 24px;
+            justify-content: center;
+            width: 100%;
+            max-width: 1000px;
+            margin-top: 12px;
+        }
+        .cb-state-card {
+            flex: 1;
+            background: var(--dark-tertiary);
+            border-radius: 18px;
+            padding: 24px 20px;
+            text-align: center;
+            border: 2px solid rgba(0,217,255,0.08);
+            position: relative;
+            overflow: hidden;
+        }
+        .cb-state-card::before {
+            content:''; position:absolute; top:0; left:0; right:0;
+            height:4px;
+        }
+        .cb-state-card.s-closed::before { background: var(--accent-green); }
+        .cb-state-card.s-open::before { background: var(--accent-red); }
+        .cb-state-card.s-half::before { background: var(--accent-orange); }
+        .cb-state-icon {
+            width: 70px; height: 70px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            margin: 0 auto 12px;
+        }
+        .cb-state-card.s-closed .cb-state-icon { background: rgba(52,211,153,0.15); }
+        .cb-state-card.s-open .cb-state-icon { background: rgba(239,68,68,0.15); }
+        .cb-state-card.s-half .cb-state-icon { background: rgba(249,115,22,0.15); }
+        .cb-state-icon i { font-size: 32px; }
+        .cb-state-card .cb-name { font-size: 24px; font-weight:700; margin-bottom: 4px; }
+        .cb-state-card .cb-desc { font-size: 15px; color:var(--text-secondary); line-height:1.5; }
+        .cb-state-card .cb-action {
+            display: inline-block;
+            margin-top: 8px;
+            padding: 4px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .cb-state-card.s-closed .cb-action { background: rgba(52,211,153,0.15); color:var(--accent-green); }
+        .cb-state-card.s-open .cb-action { background: rgba(239,68,68,0.15); color:var(--accent-red); }
+        .cb-state-card.s-half .cb-action { background: rgba(249,115,22,0.15); color:var(--accent-orange); }
+
+        .strategy-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+            width: 100%;
+            max-width: 1000px;
+            margin-top: 10px;
+        }
+        .strat-item {
+            background: var(--dark-tertiary);
+            border-radius: 12px;
+            padding: 14px 10px;
+            text-align: center;
+            border: 1.5px solid rgba(0,217,255,0.08);
+        }
+        .strat-item .strat-icon { font-size: 24px; margin-bottom: 4px; }
+        .strat-item .strat-name { font-size: 16px; font-weight:600; }
+
+        /* ============ Slide 6 - Middleware ============ */
+        .mid-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            max-width: 1000px;
+            width: 100%;
+            margin-top: 10px;
+        }
+        .mid-card {
+            background: var(--dark-tertiary);
+            border-radius: 16px;
+            padding: 22px 20px;
+            border: 1.5px solid rgba(0,217,255,0.08);
+            display: flex;
+            gap: 16px;
+            align-items: flex-start;
+        }
+        .mid-card .mid-icon {
+            width: 50px; height: 50px;
+            border-radius: 14px;
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0;
+        }
+        .mid-card .mid-icon.i1 { background: rgba(0,217,255,0.1); color:var(--accent-cyan); }
+        .mid-card .mid-icon.i2 { background: rgba(167,139,250,0.1); color:var(--accent-purple); }
+        .mid-card .mid-icon.i3 { background: rgba(249,115,22,0.1); color:var(--accent-orange); }
+        .mid-card .mid-icon.i4 { background: rgba(52,211,153,0.1); color:var(--accent-green); }
+        .mid-card .mid-title { font-size: 20px; font-weight:700; }
+        .mid-card .mid-desc { font-size: 15px; color:var(--text-secondary); line-height:1.5; }
+
+        /* ============ Slide 7 - Summary ============ */
+        .summary-box {
+            background: linear-gradient(135deg, rgba(0,217,255,0.08), rgba(45,212,191,0.05));
+            border: 2px solid rgba(0,217,255,0.2);
+            border-radius: 24px;
+            padding: 30px 40px;
+            max-width: 900px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 8px 40px var(--glow-cyan);
+        }
+        .sum-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(0,217,255,0.06);
+        }
+        .sum-item:last-child { border-bottom: none; }
+        .sum-item .sum-icon {
+            width: 36px; text-align: center;
+            font-size: 22px;
+        }
+        .sum-item .sum-text {
+            font-size: 18px;
+            color: var(--text-secondary);
+            text-align: left;
+        }
+        .sum-item .sum-hl {
+            color: var(--accent-cyan);
+            font-weight: 700;
+        }
+
+        /* ============ Responsive ============ */
+        @media(max-width:900px){
+            .slide { padding:30px 24px; }
+            .title-lg { font-size:34px; }
+            .title-md { font-size:28px; }
+            .arch-grid { grid-template-columns:1fr 1fr; }
+            .strategy-grid { grid-template-columns:repeat(2,1fr); }
+            .cb-states { flex-direction: column; }
+            .mid-grid { grid-template-columns:1fr; }
+            .lc-row { flex-wrap: wrap; }
+            .hero-visual { width:100%; height:auto; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<div class="deck" id="deck">
+
+    <!-- ======================== SLIDE 1: Title ======================== -->
+    <div class="slide slide-1 active" data-index="0">
+        <div class="glow-orb glow-orb-1"></div>
+        <div class="glow-orb glow-orb-2"></div>
+
+        <div class="float-particle" style="width:12px;height:12px;top:12%;left:10%;animation-delay:0s;"></div>
+        <div class="float-particle" style="width:8px;height:8px;top:22%;right:15%;animation-delay:1.5s;"></div>
+        <div class="float-particle" style="width:10px;height:10px;bottom:18%;left:22%;animation-delay:3s;"></div>
+        <div class="float-particle" style="width:6px;height:6px;top:55%;right:8%;animation-delay:4s;"></div>
+
+        <div class="an" style="margin-bottom:12px;">
+            <span class="tag">
+                <i class="fas fa-microchip"></i>
+                Go 项目架构解析
+            </span>
+        </div>
+
+        <div class="an">
+            <div class="badge">
+                <i class="fas fa-code-branch"></i>
+                完整运行流程
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:20px;">
+            <div class="title-lg" style="text-align:center;">
+                <span class="hl-cyan">FileGate</span> 项目
+            </div>
+        </div>
+        <div class="an" style="margin-top:4px;">
+            <div class="title-lg" style="text-align:center;">
+                运行流程 <span style="color:var(--accent-teal);">全解析</span>
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:14px;">
+            <div class="divider" style="margin:0 auto;"></div>
+        </div>
+
+        <div class="an" style="margin-top:10px;">
+            <div class="hero-visual">
+                <div class="hero-window hero-w1">
+                    <div class="win-bar">
+                        <span style="background:var(--accent-cyan);"></span>
+                        <span style="background:var(--accent-teal);"></span>
+                        <span style="background:var(--text-muted);"></span>
+                    </div>
+                    <div class="win-body">
+                        <div class="win-line" style="width:85%;background:rgba(0,217,255,0.2);"></div>
+                        <div class="win-line" style="width:65%;background:rgba(45,212,191,0.15);"></div>
+                        <div class="win-line" style="width:75%;background:rgba(0,217,255,0.18);"></div>
+                        <div class="win-line" style="width:50%;background:rgba(0,217,255,0.12);"></div>
+                    </div>
+                </div>
+                <div class="hero-window hero-w2">
+                    <div class="win-bar">
+                        <span style="background:var(--accent-teal);"></span>
+                        <span style="background:var(--accent-blue);"></span>
+                        <span style="background:var(--text-muted);"></span>
+                    </div>
+                    <div class="win-body">
+                        <div class="win-line" style="width:70%;background:rgba(45,212,191,0.15);"></div>
+                        <div class="win-line" style="width:90%;background:rgba(96,165,250,0.12);"></div>
+                        <div class="win-line" style="width:55%;background:rgba(0,217,255,0.1);"></div>
+                    </div>
+                </div>
+                <div class="hero-window hero-w3">
+                    <div class="win-bar">
+                        <span style="background:var(--accent-blue);"></span>
+                        <span style="background:var(--accent-purple);"></span>
+                        <span style="background:var(--text-muted);"></span>
+                    </div>
+                    <div class="win-body">
+                        <div class="win-line" style="width:80%;background:rgba(96,165,250,0.12);"></div>
+                        <div class="win-line" style="width:60%;background:rgba(167,139,250,0.1);"></div>
+                    </div>
+                </div>
+                <div class="hero-gear">
+                    <i class="fas fa-cog" style="font-size:40px;color:var(--accent-cyan);opacity:0.4;"></i>
+                </div>
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:6px;">
+            <div class="subtitle" style="text-align:center;">
+                从 <span class="hl-underline">加载配置</span> 到 <span class="hl-underline">响应请求</span> 的完整生命周期
+            </div>
+        </div>
+    </div>
+
+    <!-- ======================== SLIDE 2: Architecture Overview ======================== -->
+    <div class="slide" data-index="1">
+        <div class="glow-orb" style="width:450px;height:450px;top:-180px;right:-120px;background:var(--accent-purple);"></div>
+
+        <div class="an">
+            <div class="title-sm" style="text-align:center;">
+                <i class="fas fa-sitemap" style="color:var(--accent-cyan);margin-right:12px;"></i>
+                项目 <span class="hl-cyan">架构总览</span>
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:4px;">
+            <div class="divider" style="margin:0 auto;"></div>
+        </div>
+
+        <div class="an" style="margin-top:8px;width:100%;display:flex;justify-content:center;">
+            <div class="subtitle" style="text-align:center;font-size:20px;max-width:800px;">
+                六大核心模块，协同完成 <span class="hl-bg">配置驱动</span> 的图片/文件分发服务
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:20px;width:100%;display:flex;justify-content:center;">
+            <div class="arch-grid">
+                <div class="arch-card c1">
+                    <div class="arch-icon" style="background:rgba(0,217,255,0.1);">
+                        <i class="fas fa-cogs" style="color:var(--accent-cyan);"></i>
+                    </div>
+                    <div class="arch-name" style="color:var(--accent-cyan);">配置系统</div>
+                    <div class="arch-desc">YAML 加载 · 默认值<br>校验 · 标准化</div>
+                </div>
+                <div class="arch-card c2">
+                    <div class="arch-icon" style="background:rgba(45,212,191,0.1);">
+                        <i class="fas fa-route" style="color:var(--accent-teal);"></i>
+                    </div>
+                    <div class="arch-name" style="color:var(--accent-teal);">路由引擎</div>
+                    <div class="arch-desc">Router · 路径解析<br>Namespace → Class 映射</div>
+                </div>
+                <div class="arch-card c3">
+                    <div class="arch-icon" style="background:rgba(96,165,250,0.1);">
+                        <i class="fas fa-shield-alt" style="color:var(--accent-blue);"></i>
+                    </div>
+                    <div class="arch-name" style="color:var(--accent-blue);">安全中间件</div>
+                    <div class="arch-desc">Referer 校验 · 签名验证<br>路径过滤 · 速率限制</div>
+                </div>
+                <div class="arch-card c4">
+                    <div class="arch-icon" style="background:rgba(167,139,250,0.1);">
+                        <i class="fas fa-brain" style="color:var(--accent-purple);"></i>
+                    </div>
+                    <div class="arch-name" style="color:var(--accent-purple);">策略引擎</div>
+                    <div class="arch-desc">熔断器 · 负载均衡<br>后端选择策略</div>
+                </div>
+                <div class="arch-card c5">
+                    <div class="arch-icon" style="background:rgba(249,115,22,0.1);">
+                        <i class="fas fa-image" style="color:var(--accent-orange);"></i>
+                    </div>
+                    <div class="arch-name" style="color:var(--accent-orange);">文件处理</div>
+                    <div class="arch-desc">路径参数解析 · Imgproxy<br>缩放/裁剪/格式转换</div>
+                </div>
+                <div class="arch-card c6">
+                    <div class="arch-icon" style="background:rgba(52,211,153,0.1);">
+                        <i class="fas fa-database" style="color:var(--accent-green);"></i>
+                    </div>
+                    <div class="arch-name" style="color:var(--accent-green);">后端适配器</div>
+                    <div class="arch-desc">HTTP · S3 · 文件系统<br>统一 Fetch 接口</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ======================== SLIDE 3: Startup Flow ======================== -->
+    <div class="slide" data-index="2">
+        <div class="glow-orb" style="width:400px;height:400px;bottom:-140px;left:-100px;background:var(--accent-teal);"></div>
+
+        <div class="an">
+            <div class="title-sm" style="text-align:center;">
+                <i class="fas fa-play-circle" style="color:var(--accent-cyan);margin-right:10px;"></i>
+                启动流程 <span class="hl-teal">(Startup)</span>
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:4px;">
+            <div class="divider" style="margin:0 auto;"></div>
+        </div>
+
+        <div class="an" style="margin-top:20px;width:100%;display:flex;justify-content:center;">
+            <div class="flow-steps">
+                <div class="flow-step">
+                    <div class="step-num s1">01</div>
+                    <div class="step-content">
+                        <div class="step-title"><span class="hl-cyan">解析命令行参数</span></div>
+                        <div class="step-desc">读取 <code class="mono">-config</code> 标志，默认加载 <code class="mono">config.yaml</code></div>
+                        <div class="step-code"><span class="mono">configPath := flag.String("config", "config.yaml", "Path to config")</span></div>
+                    </div>
+                </div>
+                <div class="flow-step">
+                    <div class="step-num s2">02</div>
+                    <div class="step-content">
+                        <div class="step-title"><span class="hl-teal">加载并验证配置</span></div>
+                        <div class="step-desc"><code class="mono">config.Load()</code> — 读取 YAML → 设置默认值 → normalize → validate</div>
+                        <div class="step-code"><span class="mono">cfg, err := config.Load(*configPath)</span></div>
+                    </div>
+                </div>
+                <div class="flow-step">
+                    <div class="step-num s3">03</div>
+                    <div class="step-content">
+                        <div class="step-title"><span class="hl-blue">初始化 Server</span></div>
+                        <div class="step-desc">创建 Router · PolicyEngine · Processor · 后端实例 · 限流器 · Imgproxy 客户端 · 注册路由</div>
+                        <div class="step-code"><span class="mono">srv, err := server.New(cfg)</span></div>
+                    </div>
+                </div>
+                <div class="flow-step">
+                    <div class="step-num s4">04</div>
+                    <div class="step-content">
+                        <div class="step-title"><span class="hl-purple">构建路由表</span></div>
+                        <div class="step-desc"><code class="mono">NewRouter()</code> — 将 Namespace → Class → BackendPolicy 映射为 <code class="mono">map[string]map[string]Route</code></div>
+                        <div class="step-code"><span class="mono">GET /fs/:namespace/:class/*path<br>HEAD /origin/:namespace/:class/*path</span></div>
+                    </div>
+                </div>
+                <div class="flow-step">
+                    <div class="step-num s5">05</div>
+                    <div class="step-content">
+                        <div class="step-title"><span class="hl-orange">启动 HTTP 服务</span></div>
+                        <div class="step-desc">绑定地址并开始监听，等待客户端请求</div>
+                        <div class="step-code"><span class="mono">srv.Run(addr)  →  Gin ListenAndServe</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ======================== SLIDE 4: Request Lifecycle ======================== -->
+    <div class="slide" data-index="3">
+        <div class="glow-orb" style="width:400px;height:400px;top:-120px;left:-80px;background:var(--accent-blue);"></div>
+        <div class="glow-orb" style="width:300px;height:300px;bottom:-80px;right:-50px;background:var(--accent-purple);animation-delay:-3s;"></div>
+
+        <div class="an">
+            <div class="title-sm" style="text-align:center;">
+                <i class="fas fa-exchange-alt" style="color:var(--accent-cyan);margin-right:10px;"></i>
+                <span class="hl-cyan">请求处理</span> 完整生命周期
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:4px;">
+            <div class="divider" style="margin:0 auto;"></div>
+        </div>
+
+        <div class="an" style="margin-top:18px;width:100%;display:flex;justify-content:center;">
+            <div class="lifecycle">
+                <!-- Request Entry -->
+                <div class="lc-row">
+                    <div class="lc-box incoming"><i class="fas fa-arrow-right"></i> 进入请求</div>
+                    <div class="lc-arrow"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-box route"><i class="fas fa-map-signs"></i> 路由解析</div>
+                    <div class="lc-arrow"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-box auth"><i class="fas fa-key"></i> 身份校验</div>
+                </div>
+
+                <!-- Middleware chain -->
+                <div class="lc-row">
+                    <div class="lc-arrow" style="visibility:hidden;"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-arrow" style="visibility:hidden;"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-arrow"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-box limit"><i class="fas fa-tachometer-alt"></i> 限流检查</div>
+                    <div class="lc-arrow"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-box filter"><i class="fas fa-filter"></i> 路径过滤</div>
+                </div>
+
+                <!-- Core processing -->
+                <div class="lc-row">
+                    <div class="lc-arrow" style="visibility:hidden;"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-arrow" style="visibility:hidden;"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-arrow" style="visibility:hidden;"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-arrow" style="visibility:hidden;"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-arrow"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-box parse"><i class="fas fa-link"></i> 路径参数解析</div>
+                </div>
+
+                <!-- Branch: Imgproxy or Direct Backend -->
+                <div class="lc-row">
+                    <div class="lc-arrow" style="visibility:hidden;"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-arrow" style="visibility:hidden;"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-arrow" style="visibility:hidden;"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-arrow" style="visibility:hidden;"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-arrow" style="visibility:hidden;"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-arrow"><i class="fas fa-code-branch"></i></div>
+                </div>
+
+                <div class="lc-branch">
+                    <div class="branch-box b1">
+                        <i class="fas fa-check-circle"></i> 开启转换 → <span class="hl-teal">Imgproxy</span> 处理
+                    </div>
+                    <div class="branch-box b2">
+                        <i class="fas fa-times-circle"></i> 直接访问 → <span class="hl-red">策略引擎</span> 获取后端
+                    </div>
+                </div>
+
+                <!-- Backend Fetch -->
+                <div class="lc-row">
+                    <div class="lc-box imgproxy-inner"><i class="fas fa-palette"></i> 缩放/裁剪/格式/水印</div>
+                    <div class="lc-arrow"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-box backend"><i class="fas fa-server"></i> HTTP / S3 / FS</div>
+                    <div class="lc-arrow"><i class="fas fa-chevron-right"></i></div>
+                    <div class="lc-box response"><i class="fas fa-reply"></i> 返回响应</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:20px;">
+            <div class="subtitle" style="font-size:18px;text-align:center;">
+                <span class="hl-bg">handleFetch</span> 方法串联全部流程，按需穿过安全层 → 参数层 → 后端层
+            </div>
+        </div>
+    </div>
+
+    <!-- ======================== SLIDE 5: Policy Engine & Circuit Breaker ======================== -->
+    <div class="slide" data-index="4">
+        <div class="glow-orb" style="width:400px;height:400px;top:-120px;right:-100px;background:var(--accent-orange);"></div>
+
+        <div class="an">
+            <div class="title-sm" style="text-align:center;">
+                <i class="fas fa-shield-virus" style="color:var(--accent-cyan);margin-right:10px;"></i>
+                策略引擎 &amp; <span class="hl-orange">熔断器</span>
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:4px;">
+            <div class="divider" style="margin:0 auto;"></div>
+        </div>
+
+        <div class="an" style="margin-top:8px;">
+            <div class="text-lg" style="text-align:center;">
+                <span class="hl-bg">五种负载均衡策略</span> + <span class="hl-bg-orange">三态熔断机制</span>
+            </div>
+        </div>
+
+        <!-- Strategies -->
+        <div class="an" style="margin-top:16px;width:100%;display:flex;justify-content:center;">
+            <div class="strategy-grid">
+                <div class="strat-item">
+                    <div class="strat-icon"><i class="fas fa-dot-circle" style="color:var(--accent-cyan);"></i></div>
+                    <div class="strat-name" style="color:var(--accent-cyan);">Single</div>
+                    <div style="font-size:13px;color:var(--text-muted);">单一后端</div>
+                </div>
+                <div class="strat-item">
+                    <div class="strat-icon"><i class="fas fa-layer-group" style="color:var(--accent-teal);"></i></div>
+                    <div class="strat-name" style="color:var(--accent-teal);">Fallback</div>
+                    <div style="font-size:13px;color:var(--text-muted);">故障回退</div>
+                </div>
+                <div class="strat-item">
+                    <div class="strat-icon"><i class="fas fa-redo-alt" style="color:var(--accent-blue);"></i></div>
+                    <div class="strat-name" style="color:var(--accent-blue);">Round Robin</div>
+                    <div style="font-size:13px;color:var(--text-muted);">轮转均衡</div>
+                </div>
+                <div class="strat-item">
+                    <div class="strat-icon"><i class="fas fa-random" style="color:var(--accent-purple);"></i></div>
+                    <div class="strat-name" style="color:var(--accent-purple);">Random</div>
+                    <div style="font-size:13px;color:var(--text-muted);">随机选择</div>
+                </div>
+                <div class="strat-item">
+                    <div class="strat-icon"><i class="fas fa-sort-amount-down" style="color:var(--accent-orange);"></i></div>
+                    <div class="strat-name" style="color:var(--accent-orange);">Priority</div>
+                    <div style="font-size:13px;color:var(--text-muted);">优先级排序</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Circuit Breaker States -->
+        <div class="an" style="margin-top:14px;width:100%;display:flex;justify-content:center;">
+            <div class="cb-states">
+                <div class="cb-state-card s-closed">
+                    <div class="cb-state-icon">
+                        <i class="fas fa-check-circle" style="color:var(--accent-green);"></i>
+                    </div>
+                    <div class="cb-name" style="color:var(--accent-green);">Closed</div>
+                    <div class="cb-desc">正常运转，请求直接通过<br>失败计数递增</div>
+                    <div class="cb-action"><i class="fas fa-arrow-right"></i> 失败达到阈值</div>
+                </div>
+                <div class="cb-state-card s-open">
+                    <div class="cb-state-icon">
+                        <i class="fas fa-ban" style="color:var(--accent-red);"></i>
+                    </div>
+                    <div class="cb-name" style="color:var(--accent-red);">Open</div>
+                    <div class="cb-desc">熔断开启，所有请求拒绝<br>等待 RecoveryTimeout</div>
+                    <div class="cb-action"><i class="fas fa-hourglass-half"></i> 超时后进入 Half-Open</div>
+                </div>
+                <div class="cb-state-card s-half">
+                    <div class="cb-state-icon">
+                        <i class="fas fa-exclamation-triangle" style="color:var(--accent-orange);"></i>
+                    </div>
+                    <div class="cb-name" style="color:var(--accent-orange);">Half-Open</div>
+                    <div class="cb-desc">探针请求 · 成功 → Closed<br>失败 → 重回 Open</div>
+                    <div class="cb-action"><i class="fas fa-sync-alt"></i> 状态循环</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:12px;">
+            <div class="text-lg" style="font-size:16px;text-align:center;max-width:800px;">
+                <span class="hl-bg-purple">Prometheus 指标监控</span> 熔断次数、Half-Open 成功数、请求拒绝数
+            </div>
+        </div>
+    </div>
+
+    <!-- ======================== SLIDE 6: Middleware & File Conversion ======================== -->
+    <div class="slide" data-index="5">
+        <div class="glow-orb" style="width:400px;height:400px;bottom:-120px;right:-100px;background:var(--accent-green);"></div>
+
+        <div class="an">
+            <div class="title-sm" style="text-align:center;">
+                <i class="fas fa-tools" style="color:var(--accent-cyan);margin-right:10px;"></i>
+                中间件 &amp; <span class="hl-cyan">文件转换</span>
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:4px;">
+            <div class="divider" style="margin:0 auto;"></div>
+        </div>
+
+        <div class="an" style="margin-top:14px;width:100%;display:flex;justify-content:center;">
+            <div class="mid-grid">
+                <div class="mid-card">
+                    <div class="mid-icon i1"><i class="fas fa-globe"></i></div>
+                    <div>
+                        <div class="mid-title" style="color:var(--accent-cyan);">Referer 校验</div>
+                        <div class="mid-desc">检查 HTTP Referer 头是否在白名单内，防止盗链</div>
+                    </div>
+                </div>
+                <div class="mid-card">
+                    <div class="mid-icon i2"><i class="fas fa-signature"></i></div>
+                    <div>
+                        <div class="mid-title" style="color:var(--accent-purple);">签名校验</div>
+                        <div class="mid-desc">HMAC-SHA256 签名认证<br>支持过期时间 <code class="mono">exp</code> 防重放</div>
+                    </div>
+                </div>
+                <div class="mid-card">
+                    <div class="mid-icon i3"><i class="fas fa-tachometer-alt"></i></div>
+                    <div>
+                        <div class="mid-title" style="color:var(--accent-orange);">速率限制</div>
+                        <div class="mid-desc">内存 + Redis 双后端 · 固定窗口 · 自动清理过期 Bucket</div>
+                    </div>
+                </div>
+                <div class="mid-card">
+                    <div class="mid-icon i4"><i class="fas fa-shield-alt"></i></div>
+                    <div>
+                        <div class="mid-title" style="color:var(--accent-green);">路径过滤</div>
+                        <div class="mid-desc">正则黑名单 + 白名单前缀 + 扩展名白名单 · 路径穿越防护</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:16px;width:100%;display:flex;justify-content:center;">
+            <div style="background:var(--dark-tertiary);border-radius:16px;padding:18px 24px;border:2px solid rgba(0,217,255,0.1);max-width:1000px;width:100%;">
+                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center;">
+                    <span style="font-size:20px;font-weight:700;color:var(--accent-cyan);"><i class="fas fa-paint-brush"></i> 文件转换</span>
+                    <span class="hl-bg">路径后缀语法</span>
+                    <span class="mono" style="color:var(--accent-teal);font-size:14px;">@800w_600h_1b_80.webp</span>
+                    <span style="color:var(--text-muted);">|</span>
+                    <span class="hl-bg-green">URL 查询参数</span>
+                    <span class="mono" style="color:var(--accent-green);font-size:14px;">?width=800&format=webp</span>
+                </div>
+                <div style="margin-top:10px;display:flex;gap:12px;flex-wrap:wrap;justify-content:center;">
+                    <span style="color:var(--text-secondary);font-size:15px;"><i class="fas fa-check-circle" style="color:var(--accent-green);"></i> 宽度/高度</span>
+                    <span style="color:var(--text-secondary);font-size:15px;"><i class="fas fa-check-circle" style="color:var(--accent-green);"></i> 模糊(blur)</span>
+                    <span style="color:var(--text-secondary);font-size:15px;"><i class="fas fa-check-circle" style="color:var(--accent-green);"></i> 质量</span>
+                    <span style="color:var(--text-secondary);font-size:15px;"><i class="fas fa-check-circle" style="color:var(--accent-green);"></i> 格式转换</span>
+                    <span style="color:var(--text-secondary);font-size:15px;"><i class="fas fa-check-circle" style="color:var(--accent-green);"></i> 水印</span>
+                    <span style="color:var(--text-secondary);font-size:15px;"><i class="fas fa-check-circle" style="color:var(--accent-green);"></i> 参数范围校验</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ======================== SLIDE 7: Backend Adapters ======================== -->
+    <div class="slide" data-index="6">
+        <div class="glow-orb" style="width:350px;height:350px;top:-100px;left:-80px;background:var(--accent-teal);"></div>
+
+        <div class="an">
+            <div class="title-sm" style="text-align:center;">
+                <i class="fas fa-plug" style="color:var(--accent-cyan);margin-right:10px;"></i>
+                三种后端 <span class="hl-cyan">适配器</span>
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:4px;">
+            <div class="divider" style="margin:0 auto;"></div>
+        </div>
+
+        <div class="an" style="margin-top:8px;">
+            <div class="subtitle" style="text-align:center;font-size:20px;">
+                统一 <span class="hl-bg">Backend 接口</span> <span class="mono" style="font-size:18px;">Fetch(ctx, objectPath) → (*Object, error)</span>
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:24px;width:100%;display:flex;justify-content:center;">
+            <div class="arch-grid" style="grid-template-columns:repeat(3,1fr);max-width:900px;">
+                <div class="arch-card c1" style="padding:28px 22px;">
+                    <div class="arch-icon" style="width:70px;height:70px;background:rgba(0,217,255,0.1);">
+                        <i class="fas fa-globe" style="font-size:32px;color:var(--accent-cyan);"></i>
+                    </div>
+                    <div class="arch-name" style="color:var(--accent-cyan);font-size:24px;">HTTP 后端</div>
+                    <div class="arch-desc" style="font-size:15px;">
+                        拼接 URL 前缀 + 对象路径<br>
+                        发送 GET 请求获取文件<br>
+                        支持自定义 Extra Headers<br>
+                        超时控制
+                    </div>
+                    <div style="margin-top:10px;background:rgba(0,0,0,0.3);padding:6px 12px;border-radius:8px;">
+                        <span class="mono" style="font-size:12px;color:var(--accent-teal);">http://cdn.example.com/images/a.jpg</span>
+                    </div>
+                </div>
+                <div class="arch-card c5" style="padding:28px 22px;">
+                    <div class="arch-icon" style="width:70px;height:70px;background:rgba(249,115,22,0.1);">
+                        <i class="fab fa-aws" style="font-size:32px;color:var(--accent-orange);"></i>
+                    </div>
+                    <div class="arch-name" style="color:var(--accent-orange);font-size:24px;">S3 后端</div>
+                    <div class="arch-desc" style="font-size:15px;">
+                        AWS SDK for Go v2<br>
+                        路径风格访问 · 凭证管理<br>
+                        ETag / Last-Modified 元数据<br>
+                        Region 与 Endpoint 配置
+                    </div>
+                    <div style="margin-top:10px;background:rgba(0,0,0,0.3);padding:6px 12px;border-radius:8px;">
+                        <span class="mono" style="font-size:12px;color:var(--accent-orange);">s3://my-bucket/images/a.jpg</span>
+                    </div>
+                </div>
+                <div class="arch-card c2" style="padding:28px 22px;">
+                    <div class="arch-icon" style="width:70px;height:70px;background:rgba(45,212,191,0.1);">
+                        <i class="fas fa-folder-open" style="font-size:32px;color:var(--accent-teal);"></i>
+                    </div>
+                    <div class="arch-name" style="color:var(--accent-teal);font-size:24px;">文件系统</div>
+                    <div class="arch-desc" style="font-size:15px;">
+                        本地磁盘文件读取<br>
+                        路径穿越攻击防护<br>
+                        <code class="mono">isSubPath()</code> 安全校验<br>
+                        MIME 类型自动检测
+                    </div>
+                    <div style="margin-top:10px;background:rgba(0,0,0,0.3);padding:6px 12px;border-radius:8px;">
+                        <span class="mono" style="font-size:12px;color:var(--accent-teal);">/data/backups/images/a.jpg</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ======================== SLIDE 8: Summary ======================== -->
+    <div class="slide" data-index="7">
+        <div class="glow-orb" style="width:500px;height:500px;bottom:-180px;left:50%;transform:translateX(-50%);background:var(--accent-purple);"></div>
+
+        <div class="an" style="margin-bottom:6px;">
+            <div class="badge" style="font-size:20px;">
+                <i class="fas fa-star"></i>
+                一句话总结
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:18px;">
+            <div class="title-md" style="text-align:center;">
+                FileGate = <span class="hl-cyan">配置驱动</span> 的
+            </div>
+        </div>
+        <div class="an" style="margin-top:4px;">
+            <div class="title-md" style="text-align:center;">
+                安全 <span class="hl-teal">·</span> 智能 <span class="hl-teal">·</span> 可扩展
+            </div>
+        </div>
+        <div class="an" style="margin-top:6px;">
+            <div class="title-lg" style="text-align:center;">
+                <span class="hl-bg">文件分发网关</span>
+            </div>
+        </div>
+
+        <div class="an" style="margin-top:18px;">
+            <div class="divider" style="margin:0 auto;width:120px;"></div>
+        </div>
+
+        <div class="an" style="margin-top:14px;width:100%;display:flex;justify-content:center;">
+            <div class="summary-box">
+                <div class="sum-item">
+                    <div class="sum-icon"><i class="fas fa-cog" style="color:var(--accent-cyan);"></i></div>
+                    <div class="sum-text">以 <span class="sum-hl">YAML 配置</span> 驱动整站行为 · 全组件可配置化</div>
+                </div>
+                <div class="sum-item">
+                    <div class="sum-icon"><i class="fas fa-shield-alt" style="color:var(--accent-purple);"></i></div>
+                    <div class="sum-text"><span class="sum-hl">四层安全防护</span> · Referer → 签名 → 限流 → 路径过滤</div>
+                </div>
+                <div class="sum-item">
+                    <div class="sum-icon"><i class="fas fa-brain" style="color:var(--accent-green);"></i></div>
+                    <div class="sum-text"><span class="sum-hl">熔断器 + 5 种策略</span> · 自动故障隔离与恢复</div>
+                </div>
+                <div class="sum-item">
+                    <div class="sum-icon"><i class="fas fa-image" style="color:var(--accent-orange);"></i></div>
+                    <div class="sum-text"><span class="sum-hl">Imgproxy 集成</span> · 实时图片缩放/裁剪/格式转换</div>
+                </div>
+                <div class="sum-item">
+                    <div class="sum-icon"><i class="fas fa-database" style="color:var(--accent-teal);"></i></div>
+                    <div class="sum-text"><span class="sum-hl">三端适配</span> · HTTP / S3 / 本地文件系统</div>
+                </div>
+                <div class="sum-item">
+                    <div class="sum-icon"><i class="fas fa-chart-line" style="color:var(--accent-blue);"></i></div>
+                    <div class="sum-text"><span class="sum-hl">Prometheus 指标</span> · 全链路可观测</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+(function(){
+    const slides = document.querySelectorAll('.slide');
+    const total = slides.length;
+    let current = 0;
+
+    function animateSlide(slide){
+        const anims = slide.querySelectorAll('.an');
+        anims.forEach(el=>{ el.classList.remove('show'); });
+        anims.forEach((el,i)=>{
+            setTimeout(()=>{ el.classList.add('show'); }, 120 + i*180);
+        });
+    }
+
+    function goTo(index){
+        if(index<0||index>=total||index===current) return;
+        
+        // ===== Animation Reset Fix =====
+        // Clone nodes to force CSS animation restart
+        slides[current].querySelectorAll('.an, .anim-item, [style*="animation"]').forEach(function(item) {
+            var clone = item.cloneNode(true);
+            item.parentNode.replaceChild(clone, item);
+        });
+        
+        slides[current].classList.remove('active');
+        slides[current].querySelectorAll('.an').forEach(el=>el.classList.remove('show'));
+        current = index;
+        slides[current].classList.add('active');
+        animateSlide(slides[current]);
+    }
+
+    function changeSlide(dir){ goTo(current+dir); }
+    window.changeSlide = changeSlide;
+
+    document.addEventListener('keydown', e=>{
+        if(e.key==='ArrowRight'||e.key===' '||e.key==='Enter') changeSlide(1);
+        if(e.key==='ArrowLeft'||e.key==='Backspace') changeSlide(-1);
+    });
+
+    let touchX = 0;
+    document.addEventListener('touchstart', e=>{ touchX=e.touches[0].clientX; });
+    document.addEventListener('touchend', e=>{
+        const dx = e.changedTouches[0].clientX - touchX;
+        if(Math.abs(dx)>50){ changeSlide(dx<0?1:-1); }
+    });
+
+    let wheelLock = false;
+    document.addEventListener('wheel', e=>{
+        if(wheelLock) return;
+        wheelLock = true;
+        setTimeout(()=>wheelLock=false, 1200);
+        changeSlide(e.deltaY>0?1:-1);
+    });
+
+    animateSlide(slides[0]);
+})();
+</script>
+
+</body>
+</html>

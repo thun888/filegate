@@ -3,7 +3,8 @@ package engine
 import (
 	"fmt"
 
-	"filegate/config"
+	"github.com/thun888/filegate/config"
+	"github.com/thun888/filegate/internal/middleware"
 )
 
 // Route 表示 namespace + class 的最终路由映射。
@@ -11,6 +12,9 @@ type Route struct {
 	Namespace config.NamespaceConfig
 	Class     config.ClassConfig
 	Policy    config.BackendPolicy
+
+	// PathFilter 是启动时按类预编译好的路径过滤器，请求处理时直接复用，
+	PathFilter *middleware.PathFilter
 }
 
 type Router struct {
@@ -18,6 +22,9 @@ type Router struct {
 	conversionRules map[string]config.FileConversionRule
 }
 
+// NewRouter 根据配置创建路由器实例。
+// 它解析配置中的 BackendPolicies、Namespaces 和 FileConversionRules，
+// 构建路由映射表用于快速查找。
 func NewRouter(cfg *config.Config) (*Router, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is nil")
@@ -25,31 +32,34 @@ func NewRouter(cfg *config.Config) (*Router, error) {
 
 	policyMap := make(map[string]config.BackendPolicy, len(cfg.BackendPolicies))
 	for _, p := range cfg.BackendPolicies {
-		policyMap[normalizeKey(p.Name)] = p
+		policyMap[config.NormalizeKey(p.Name)] = p
 	}
 
 	routes := make(map[string]map[string]Route, len(cfg.Namespaces))
 	for _, ns := range cfg.Namespaces {
-		policy, exists := policyMap[normalizeKey(ns.BackendPolicy)]
-		if !exists {
-			return nil, fmt.Errorf("namespace %q references unknown backend policy %q", ns.Name, ns.BackendPolicy)
-		}
+		policy := policyMap[config.NormalizeKey(ns.BackendPolicy)]
 
 		classMap := make(map[string]Route, len(ns.Class))
 		for _, cls := range ns.Class {
-			classMap[normalizeKey(cls.Name)] = Route{
-				Namespace: ns,
-				Class:     cls,
-				Policy:    policy,
+			pathFilter, err := middleware.NewPathFilter(cls.Security.PathFilter)
+			if err != nil {
+				return nil, fmt.Errorf("build path filter for %q/%q: %w", ns.Name, cls.Name, err)
+			}
+
+			classMap[config.NormalizeKey(cls.Name)] = Route{
+				Namespace:  ns,
+				Class:      cls,
+				Policy:     policy,
+				PathFilter: pathFilter,
 			}
 		}
 
-		routes[normalizeKey(ns.Name)] = classMap
+		routes[config.NormalizeKey(ns.Name)] = classMap
 	}
 
 	conversionRules := make(map[string]config.FileConversionRule, len(cfg.FileConversionRules))
 	for _, rule := range cfg.FileConversionRules {
-		conversionRules[normalizeKey(rule.Name)] = rule
+		conversionRules[config.NormalizeKey(rule.Name)] = rule
 	}
 
 	return &Router{
@@ -58,13 +68,15 @@ func NewRouter(cfg *config.Config) (*Router, error) {
 	}, nil
 }
 
+// Resolve 根据 namespace 和 className 查找对应的路由配置。
+// 返回匹配的 Route，如果 namespace 或 class 不存在则返回错误。
 func (r *Router) Resolve(namespace, className string) (Route, error) {
-	ns, exists := r.routes[normalizeKey(namespace)]
+	ns, exists := r.routes[config.NormalizeKey(namespace)]
 	if !exists {
 		return Route{}, fmt.Errorf("namespace %q not found", namespace)
 	}
 
-	route, exists := ns[normalizeKey(className)]
+	route, exists := ns[config.NormalizeKey(className)]
 	if !exists {
 		return Route{}, fmt.Errorf("class %q not found in namespace %q", className, namespace)
 	}
@@ -72,7 +84,9 @@ func (r *Router) Resolve(namespace, className string) (Route, error) {
 	return route, nil
 }
 
+// FileConversionRule 根据名称查找文件转换规则。
+// 返回规则和是否存在该规则的布尔值。
 func (r *Router) FileConversionRule(name string) (config.FileConversionRule, bool) {
-	rule, exists := r.conversionRules[normalizeKey(name)]
+	rule, exists := r.conversionRules[config.NormalizeKey(name)]
 	return rule, exists
 }

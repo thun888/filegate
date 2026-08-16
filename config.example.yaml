@@ -28,14 +28,14 @@ backends:
       half_open_timeout: 10s
 
 backend_policy:
-  - name: "policy1" # single | fallback | round_robin | random | priority
-    strategy: fallback
+  - name: "policy1"
+    strategy: fallback # single | fallback | round_robin | random | priority
     backends:
       - backend1
       - backend2
 
 # 对应路径：http://localhost:8080/fs/{namespace}/{class}/{path}.jpg@{width}w_{height}h_{blur}_{quality}.{format}
-# blur: 1b 开启  0b（或省略）关闭
+# blur 为高斯模糊 sigma（浮点，如 0.5b），0b 或省略表示不模糊
 namespaces:
   - name: "namespace1"
     backend_policy: "policy1"
@@ -59,11 +59,6 @@ namespaces:
             # EXPIRE
             # exp: 过期时间，单位秒
             expire: 300
-          # 访问频率限制
-          limit:
-            enabled: true
-            max_requests: 100
-            window: 1m
           path_filter:
             deny_patterns:
               - "../"
@@ -102,37 +97,33 @@ file_conversion_rules:
         max: 95
       blur: true
       format: true
-      zip: true # 暂未实现
     default_params:
       width: 800
       height: 600
-      blur: 0
+      blur: 0.5
       quality: 80
       format: "avif"
-      zip: false
     watermark:
+      # 需要在 imgproxy 端配置水印图片
       enabled: true
-      position: "bottom-right"
       opacity: 0.5
+      position: "soea"  # ce(居中), no(顶部), so(底部), ea(右边), we(左边), noea(右上), nowe(左上), soea(右下), sowe(左下), re(平铺), ch(棋盘格)
+      x_offset: 0  # X轴偏移量，>=1或<=-1为绝对像素值，(-1,1)为相对值
+      y_offset: 0  # Y轴偏移量，>=1或<=-1为绝对像素值，(-1,1)为相对值
+      scale: 0     # 水印大小相对于结果图片的比例，0表示不改变大小
       
 service:
   imgproxy:
     url: ''
+    timeout: 20s
     signature:
       enabled: false
       key: ''
       salt: ''
 
-  redis:
-    enabled: false
-    addr: "127.0.0.1:6379"
-    password: ""
-    db: 0
-    key_prefix: "filegate:limit:"
-
-system: 
+system:
   server:
-    domain: "http://127.0.0.1:8080"
+    base_url: "http://127.0.0.1:8080"
     host: 127.0.0.1
     port: 8080
     

@@ -1,25 +1,30 @@
 package server
 
 import (
+	"embed"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"filegate/config"
-	"filegate/internal/backend"
-	"filegate/internal/engine"
-	"filegate/internal/middleware"
+	"github.com/thun888/filegate/config"
+	"github.com/thun888/filegate/internal/backend"
+	"github.com/thun888/filegate/internal/engine"
+	"github.com/thun888/filegate/internal/middleware"
+	"github.com/thun888/filegate/internal/utils"
 )
+
+// 内嵌的默认图片
+//
+//go:embed res_code/*
+var resCodeImages embed.FS
 
 // Server 封装了 FileGate 的 HTTP 服务。
 type Server struct {
@@ -28,14 +33,14 @@ type Server struct {
 	router       *engine.Router
 	policyEngine *engine.PolicyEngine
 	processor    *engine.Processor
-	limiter      *middleware.RateLimiter
 	backends     map[string]backend.Backend
 	backendCfgs  map[string]config.BackendConfig
 	imgproxy     *imgproxyClient
-
-	pathFilterMu sync.RWMutex
-	pathFilters  map[string]*middleware.PathFilter
 }
+
+// errorImages 预加载的错误图片缓存，key 为图片文件名（如 "404.png"）。
+// 在启动时一次性加载所有错误图片到内存，优先从外部文件系统读取，外部没有则回退到内嵌图片。
+var errorImages map[string][]byte
 
 func New(cfg *config.Config) (*Server, error) {
 	if cfg == nil {
@@ -57,10 +62,10 @@ func New(cfg *config.Config) (*Server, error) {
 			return nil, buildErr
 		}
 
-		key := normalizeKey(backendCfg.Name)
-		if _, exists := backendMap[key]; exists {
-			return nil, fmt.Errorf("duplicated backend %q", backendCfg.Name)
-		}
+		key := config.NormalizeKey(backendCfg.Name)
+		// if _, exists := backendMap[key]; exists {
+		// 	return nil, fmt.Errorf("duplicated backend %q", backendCfg.Name)
+		// }
 		backendMap[key] = instance
 		backendCfgMap[key] = backendCfg
 		policyEngine.RegisterBackend(backendCfg.Name, backendCfg.CircuitBreaker)
@@ -71,16 +76,7 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 
-	limiter, err := middleware.NewRateLimiterWithRedis(cfg.Service.Redis)
-	if err != nil {
-		return nil, err
-	}
-
-	pathFilters, err := buildPathFilterIndex(cfg)
-	if err != nil {
-		return nil, err
-	}
-
+	// 手动创建 Gin 引擎以控制Logger的使用
 	httpEngine := gin.New()
 	if cfg.System.Logging.AccessLog {
 		httpEngine.Use(gin.Logger())
@@ -92,13 +88,13 @@ func New(cfg *config.Config) (*Server, error) {
 		engine:       httpEngine,
 		router:       routeIndex,
 		policyEngine: policyEngine,
-		processor:    engine.NewProcessor(cfg),
-		limiter:      limiter,
+		processor:    engine.NewProcessor(routeIndex.FileConversionRule),
 		backends:     backendMap,
 		backendCfgs:  backendCfgMap,
 		imgproxy:     imgproxyClient,
-		pathFilters:  pathFilters,
 	}
+
+	errorImages = preloadErrorImages()
 
 	httpEngine.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "pong"})
@@ -112,32 +108,12 @@ func New(cfg *config.Config) (*Server, error) {
 
 	httpEngine.GET("/fs/:namespace/:class/*objectPath", s.handleFetch)
 	httpEngine.HEAD("/fs/:namespace/:class/*objectPath", s.handleFetch)
+	// /origin/ 这个接口专门给 imgproxy 拉取原始文件，避免任何转换或其他处理导致无法正常拉取到原始文件
+	// 需在反向代理中限制访问来源为 imgproxy 实例
 	httpEngine.GET("/origin/:namespace/:class/*objectPath", s.handleOriginFetch)
 	httpEngine.HEAD("/origin/:namespace/:class/*objectPath", s.handleOriginFetch)
 
 	return s, nil
-}
-
-func buildPathFilterIndex(cfg *config.Config) (map[string]*middleware.PathFilter, error) {
-	filters := make(map[string]*middleware.PathFilter)
-	if cfg == nil {
-		return filters, nil
-	}
-
-	for _, ns := range cfg.Namespaces {
-		for _, cls := range ns.Class {
-			key := normalizeKey(ns.Name) + ":" + normalizeKey(cls.Name)
-
-			filter, err := middleware.NewPathFilter(cls.Security.PathFilter)
-			if err != nil {
-				return nil, fmt.Errorf("build path filter for %q/%q: %w", ns.Name, cls.Name, err)
-			}
-
-			filters[key] = filter
-		}
-	}
-
-	return filters, nil
 }
 
 func (s *Server) Run(addr string) error {
@@ -151,7 +127,11 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) handleFetch(c *gin.Context) {
 	namespace := c.Param("namespace")
 	className := c.Param("class")
-	rawObjectPath := strings.TrimPrefix(c.Param("objectPath"), "/")
+	rawObjectPath, err := utils.SanitizePath(strings.TrimPrefix(c.Param("objectPath"), "/"))
+	if err != nil {
+		abortWithError(c, http.StatusBadRequest, err)
+		return
+	}
 	if rawObjectPath == "" {
 		abortWithError(c, http.StatusBadRequest, fmt.Errorf("object path is empty"))
 		return
@@ -169,74 +149,81 @@ func (s *Server) handleFetch(c *gin.Context) {
 	}
 
 	if err = middleware.VerifySignature(c.Request, route.Class.Security.Signature); err != nil {
-		statusCode := http.StatusUnauthorized
-		if errors.Is(err, middleware.ErrSignatureExpired) {
-			statusCode = http.StatusUnauthorized
-		}
-		abortWithError(c, statusCode, err)
+		// statusCode := http.StatusUnauthorized
+		// if errors.Is(err, middleware.ErrSignatureExpired) {
+		// 	statusCode = http.StatusForbidden
+		// }
+		abortWithError(c, http.StatusUnauthorized, err)
 		return
 	}
-
-	limitKey := c.ClientIP() + ":" + normalizeKey(namespace) + ":" + normalizeKey(className)
-	limitResult := s.limiter.Check(limitKey, route.Class.Security.Limit)
-	setRateLimitHeaders(c, limitResult)
-	if !limitResult.Allowed {
-		abortWithError(c, http.StatusTooManyRequests, fmt.Errorf("rate limit exceeded"))
-		return
-	}
-
-	if err = s.validatePathFilter(namespace, className, route.Class.Security.PathFilter, rawObjectPath); err != nil {
-		abortWithError(c, http.StatusForbidden, err)
-		return
-	}
-
 	sourcePath, transformOptions, err := s.processor.ParseRequest(route.Class, rawObjectPath, c.Request.URL.Query())
 	if err != nil {
 		abortWithError(c, http.StatusBadRequest, err)
 		return
 	}
 
+	// PathFilter 必须校验后端实际拉取的 sourcePath（此时转换后缀已被剥离），
+	// 否则 deny_patterns / allow_extensions 可被 @100w.jpg 这类转换后缀绕过。
+	if err = route.PathFilter.Validate(sourcePath); err != nil {
+		abortWithError(c, http.StatusForbidden, err)
+		return
+	}
+
+	// 处理转换请求
 	if transformOptions.Enabled && s.imgproxy != nil {
-		rule, exists := s.router.FileConversionRule(route.Class.FileConversion.Rule)
-		if !exists {
-			abortWithError(c, http.StatusInternalServerError, fmt.Errorf("file conversion rule %q not found", route.Class.FileConversion.Rule))
-			return
-		}
+		rule, _ := s.router.FileConversionRule(route.Class.FileConversion.Rule)
+		// if !exists {
+		// 	abortWithError(c, http.StatusInternalServerError, fmt.Errorf("file conversion rule %q not found", route.Class.FileConversion.Rule))
+		// 	return
+		// }
 
 		imgResp, processErr := s.processWithImgproxy(c.Request, namespace, className, sourcePath, transformOptions, rule)
 		if processErr != nil {
+			// 没有任何可下发的处理选项属于客户端请求/配置问题，返回 400
+			if errors.Is(processErr, ErrImgproxyNoProcessingOptions) {
+				abortWithError(c, http.StatusBadRequest, processErr)
+				return
+			}
+			// imgproxy 返回 404 说明源文件不存在，向客户端透传 404
+			var statusErr *imgproxyStatusError
+			if errors.As(processErr, &statusErr) && statusErr.code == http.StatusNotFound {
+				abortWithError(c, http.StatusNotFound, fmt.Errorf("source file not found"))
+				return
+			}
 			abortWithError(c, http.StatusBadGateway, processErr)
 			return
 		}
 		defer imgResp.Body.Close()
 
-		for key, value := range route.Class.ResponseHeaders {
-			c.Header(key, value)
-		}
-
+		// 将 imgproxy 响应头复制到客户端响应中，保留原始的缓存控制、内容类型等信息
 		for _, headerName := range []string{"Etag", "Last-Modified", "Cache-Control", "Content-Disposition", "Accept-Ranges", "Content-Type", "Content-Length"} {
 			for _, value := range imgResp.Header.Values(headerName) {
 				c.Header(headerName, value)
 			}
 		}
-
-		if transformOptions.Enabled {
-			c.Header("X-FileGate-Transform", engine.FormatTransformOptions(transformOptions))
+		// 将自定义响应头添加到客户端响应中
+		for key, value := range route.Class.ResponseHeaders {
+			c.Header(key, value)
 		}
+
+		c.Header("X-FileGate-Transform", engine.FormatTransformOptions(transformOptions))
 		c.Header("X-FileGate-Policy", route.Policy.Name)
 
+		// 对于 HEAD 请求，只返回状态码和响应头，不返回响应体
 		if c.Request.Method == http.MethodHead {
 			c.Status(imgResp.StatusCode)
 			return
 		}
 
 		c.Status(imgResp.StatusCode)
+		// 将 imgproxy 响应体直接流式传输到客户端，避免在服务器端缓存整个文件
 		if _, err = io.Copy(c.Writer, imgResp.Body); err != nil {
 			_ = c.Error(fmt.Errorf("stream imgproxy response body: %w", err))
 		}
 		return
 	}
 
+	// 处理非转换请求，直接从后端拉取原始文件
 	obj, err := s.policyEngine.FetchWithPolicy(c.Request.Context(), route.Policy, s.backends, sourcePath)
 	if err != nil {
 		abortWithError(c, http.StatusBadGateway, err)
@@ -261,9 +248,7 @@ func (s *Server) handleFetch(c *gin.Context) {
 		c.Header("Content-Length", strconv.FormatInt(obj.Size, 10))
 	}
 
-	if transformOptions.Enabled {
-		c.Header("X-FileGate-Transform", engine.FormatTransformOptions(transformOptions))
-	}
+	// c.Header("X-FileGate-Transform", engine.FormatTransformOptions(transformOptions)) // 仅在转换请求时返回该响应头
 	c.Header("X-FileGate-Policy", route.Policy.Name)
 
 	if c.Request.Method == http.MethodHead {
@@ -277,11 +262,15 @@ func (s *Server) handleFetch(c *gin.Context) {
 	}
 }
 
-// handleOriginFetch 用于给 imgproxy 拉取原始文件，不做转换处理。
+// handleOriginFetch 用于给 imgproxy 拉取原始文件，不做转换处理和签名校验。
 func (s *Server) handleOriginFetch(c *gin.Context) {
 	namespace := c.Param("namespace")
 	className := c.Param("class")
-	rawObjectPath := strings.TrimPrefix(c.Param("objectPath"), "/")
+	rawObjectPath, err := utils.SanitizePath(strings.TrimPrefix(c.Param("objectPath"), "/"))
+	if err != nil {
+		abortWithError(c, http.StatusBadRequest, err)
+		return
+	}
 	if rawObjectPath == "" {
 		abortWithError(c, http.StatusBadRequest, fmt.Errorf("object path is empty"))
 		return
@@ -293,16 +282,16 @@ func (s *Server) handleOriginFetch(c *gin.Context) {
 		return
 	}
 
-	if err = s.validatePathFilter(namespace, className, route.Class.Security.PathFilter, rawObjectPath); err != nil {
-		abortWithError(c, http.StatusForbidden, err)
-		return
-	}
-
 	classCfg := route.Class
 	classCfg.FileConversion.Enabled = false
 	sourcePath, _, err := s.processor.ParseRequest(classCfg, rawObjectPath, c.Request.URL.Query())
 	if err != nil {
 		abortWithError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	if err = route.PathFilter.Validate(sourcePath); err != nil {
+		abortWithError(c, http.StatusForbidden, err)
 		return
 	}
 
@@ -340,37 +329,24 @@ func (s *Server) handleOriginFetch(c *gin.Context) {
 	}
 }
 
-func (s *Server) validatePathFilter(namespace, className string, cfg config.PathFilterConfig, objectPath string) error {
-	key := normalizeKey(namespace) + ":" + normalizeKey(className)
-
-	s.pathFilterMu.RLock()
-	pathFilter := s.pathFilters[key]
-	s.pathFilterMu.RUnlock()
-
-	if pathFilter == nil {
-		created, err := middleware.NewPathFilter(cfg)
-		if err != nil {
-			return err
-		}
-
-		s.pathFilterMu.Lock()
-		if existing := s.pathFilters[key]; existing != nil {
-			pathFilter = existing
-		} else {
-			s.pathFilters[key] = created
-			pathFilter = created
-		}
-		s.pathFilterMu.Unlock()
-	}
-
-	return pathFilter.Validate(objectPath)
-}
-
+// abortWithError 统一处理 HTTP 错误响应，根据状态码和请求类型返回最合适的错误格式。
+// 函数会按以下优先级处理错误：
+//  1. 设置禁用缓存的响应头，确保错误响应不会被缓存
+//  2. 如果状态码对应有错误图片（eg: 404→404.png），且图片已加载，则返回图片响应
+//  3. 对于 HEAD 请求，只返回状态码和响应头，不返回响应体
+//  4. 如果没有可用的错误图片，则返回 JSON 格式的错误信息
+//
+// 参数：
+//   - c: Gin 上下文对象，用于写入响应
+//   - statusCode: HTTP 状态码
+//   - err: 错误对象，其 Error() 方法返回值将作为 JSON 错误信息
+//
+// 该函数会终止后续处理链（调用 Abort 系列方法），调用后不应再继续执行其他逻辑。
 func abortWithError(c *gin.Context, statusCode int, err error) {
 	setNoCacheHeaders(c)
 
 	if imageName := errorImageName(statusCode); imageName != "" {
-		if imageData, readErr := readErrorImage(imageName); readErr == nil {
+		if imageData, ok := errorImages[imageName]; ok {
 			c.Header("Content-Type", "image/png")
 			c.Header("Content-Length", strconv.Itoa(len(imageData)))
 
@@ -390,99 +366,75 @@ func abortWithError(c *gin.Context, statusCode int, err error) {
 	})
 }
 
+// setNoCacheHeaders 设置 HTTP 响应头，禁止客户端及中间代理缓存响应内容。
 func setNoCacheHeaders(c *gin.Context) {
 	c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	c.Header("Pragma", "no-cache")
 	c.Header("Expires", "0")
 }
 
+// errorImageName 根据 HTTP 状态码返回对应的错误图片文件名。
+// 返回值：
+//   - 对于 404 状态码，返回 "404.png"
+//   - 对于 403 状态码，返回 "403.png"
+//   - 对于 5xx 状态码，返回 "5xx.png"
+//   - 对于其他状态码，返回空字符串
 func errorImageName(statusCode int) string {
 	if statusCode == http.StatusNotFound {
 		return "404.png"
 	}
-
-	if statusCode >= 400 && statusCode < 500 {
-		return "400.png"
+	if statusCode == http.StatusForbidden {
+		return "403.png"
 	}
-
 	if statusCode >= 500 && statusCode < 600 {
-		return "500.png"
+		return "5xx.png"
 	}
-
 	return ""
 }
 
-func readErrorImage(imageName string) ([]byte, error) {
-	var readErr error
-	for _, imagePath := range candidateErrorImagePaths(imageName) {
-		data, err := os.ReadFile(imagePath)
-		if err == nil {
-			return data, nil
-		}
-		readErr = err
-	}
+// preloadErrorImages 在启动时一次性加载所有错误图片到内存。
+// 优先从外部文件系统读取，外部没有则回退到内嵌图片。
+func preloadErrorImages() map[string][]byte {
+	cache := make(map[string][]byte)
 
-	if readErr == nil {
-		readErr = fmt.Errorf("error image %q not found", imageName)
-	}
-
-	return nil, readErr
-}
-
-func candidateErrorImagePaths(imageName string) []string {
-	candidates := []string{
-		filepath.Join("assets", "res_code", imageName),
-		filepath.Join("..", "assets", "res_code", imageName),
-		filepath.Join("..", "..", "assets", "res_code", imageName),
-	}
-
-	if executablePath, err := os.Executable(); err == nil {
-		executableDir := filepath.Dir(executablePath)
-		candidates = append(candidates,
-			filepath.Join(executableDir, "assets", "res_code", imageName),
-			filepath.Join(executableDir, "..", "assets", "res_code", imageName),
-		)
-	}
-
-	return dedupePaths(candidates)
-}
-
-func dedupePaths(paths []string) []string {
-	seen := make(map[string]struct{}, len(paths))
-	result := make([]string, 0, len(paths))
-	for _, p := range paths {
-		if _, exists := seen[p]; exists {
+	for _, name := range []string{"404.png", "403.png", "5xx.png"} {
+		// 先尝试外部文件
+		if data, ok := tryReadExternal(name); ok {
+			cache[name] = data
 			continue
 		}
-		seen[p] = struct{}{}
-		result = append(result, p)
-	}
-
-	return result
-}
-
-func setRateLimitHeaders(c *gin.Context, result middleware.RateLimitResult) {
-	if result.Limit > 0 {
-		c.Header("X-RateLimit-Limit", strconv.Itoa(result.Limit))
-	}
-
-	if result.Limit > 0 || result.Remaining > 0 {
-		c.Header("X-RateLimit-Remaining", strconv.Itoa(result.Remaining))
-	}
-
-	if result.ResetAfter > 0 {
-		resetSeconds := int(math.Ceil(result.ResetAfter.Seconds()))
-		if resetSeconds < 0 {
-			resetSeconds = 0
+		// 回退到内嵌图片
+		if data, err := resCodeImages.ReadFile("res_code/" + name); err == nil {
+			cache[name] = data
 		}
-		c.Header("X-RateLimit-Reset", strconv.Itoa(resetSeconds))
 	}
 
-	if result.Source != "" {
-		c.Header("X-RateLimit-Source", result.Source)
-	}
+	return cache
 }
 
-func normalizeKey(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
+// tryReadExternal 尝试从多个可能的位置读取错误图片文件。
+// 依次检查以下路径：
+//  1. 当前工作目录下的 res_code 文件夹
+//  2. 可执行文件所在目录下的 res_code 文件夹（如果可执行文件路径可获取）
+//
+// 参数：
+//   - imageName: 图片文件名（如 "404.png"）
+//
+// 返回值：
+//   - []byte: 图片文件内容（成功读取时）
+//   - bool: 是否成功读取到文件
+//
+// 任何一个路径读取成功即返回，
+// 所有路径都失败时返回 nil 和 false
+func tryReadExternal(imageName string) ([]byte, bool) {
+	paths := []string{filepath.Join("res_code", imageName)}
+	if exe, err := os.Executable(); err == nil {
+		paths = append(paths, filepath.Join(filepath.Dir(exe), "res_code", imageName))
+	}
+	for _, p := range paths {
+		if data, err := os.ReadFile(p); err == nil {
+			return data, true
+		}
+	}
+	return nil, false
 }

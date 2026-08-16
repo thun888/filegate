@@ -9,10 +9,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"filegate/config"
+	"github.com/thun888/filegate/config"
+	"github.com/thun888/filegate/internal/engine"
 )
 
-func TestBuildPathFilterIndex_PrecompileOnStartup(t *testing.T) {
+func TestNewRouter_PrecompilesPathFilter(t *testing.T) {
 	cfg := &config.Config{
 		Namespaces: []config.NamespaceConfig{
 			{
@@ -39,25 +40,24 @@ func TestBuildPathFilterIndex_PrecompileOnStartup(t *testing.T) {
 		},
 	}
 
-	filters, err := buildPathFilterIndex(cfg)
+	router, err := engine.NewRouter(cfg)
 	if err != nil {
-		t.Fatalf("buildPathFilterIndex() error = %v", err)
+		t.Fatalf("NewRouter() error = %v", err)
 	}
 
-	if got := len(filters); got != 2 {
-		t.Fatalf("len(filters) = %d, want 2", got)
+	imgRoute, err := router.Resolve("ns1", "img")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
 	}
-
-	imgFilter, ok := filters["ns1:img"]
-	if !ok {
+	if imgRoute.PathFilter == nil {
 		t.Fatalf("missing precompiled filter for ns1:img")
 	}
 
-	if err = imgFilter.Validate("private/a.jpg"); err == nil {
+	if err = imgRoute.PathFilter.Validate("private/a.jpg"); err == nil {
 		t.Fatalf("expected deny pattern to block private path")
 	}
 
-	if err = imgFilter.Validate("public/a.jpg"); err != nil {
+	if err = imgRoute.PathFilter.Validate("public/a.jpg"); err != nil {
 		t.Fatalf("expected public path allowed, got %v", err)
 	}
 }

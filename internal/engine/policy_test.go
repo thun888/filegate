@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"filegate/config"
-	"filegate/internal/backend"
+	"github.com/thun888/filegate/config"
+	"github.com/thun888/filegate/internal/backend"
 )
 
 type failingBackend struct {

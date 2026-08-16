@@ -6,8 +6,8 @@ import (
 	"net"
 	"strconv"
 
-	"filegate/config"
-	"filegate/internal/server"
+	"github.com/thun888/filegate/config"
+	"github.com/thun888/filegate/internal/server"
 )
 
 func main() {

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"filegate/config"
+	"github.com/thun888/filegate/config"
 )
 
 // Object 表示后端返回的对象数据。
@@ -20,7 +20,9 @@ type Object struct {
 
 // Backend 是所有存储后端的统一抽象。
 type Backend interface {
+	// Name 返回后端的唯一标识名称。
 	Name() string
+	// Fetch 根据对象路径从后端获取数据，失败时返回错误。
 	Fetch(ctx context.Context, objectPath string) (*Object, error)
 }
 

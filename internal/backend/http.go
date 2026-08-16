@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"filegate/config"
+	"github.com/thun888/filegate/config"
 )
 
 type httpBackend struct {

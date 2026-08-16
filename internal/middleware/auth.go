@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"filegate/config"
+	"github.com/thun888/filegate/config"
 )
 
 var (
@@ -52,10 +52,6 @@ func VerifySignature(r *http.Request, cfg config.SignatureConfig) error {
 		return nil
 	}
 
-	if strings.TrimSpace(cfg.Secret) == "" {
-		return fmt.Errorf("signature enabled but secret is empty")
-	}
-
 	query := r.URL.Query()
 	expRaw := strings.TrimSpace(query.Get("exp"))
 	signRaw := strings.TrimSpace(query.Get("sign"))
@@ -68,10 +64,12 @@ func VerifySignature(r *http.Request, cfg config.SignatureConfig) error {
 		return fmt.Errorf("invalid exp value %q", expRaw)
 	}
 
+	// 过期检测
 	now := time.Now().Unix()
 	if now > exp {
 		return ErrSignatureExpired
 	}
+	// 如果配置了过期窗口，检查 exp 是否在合理范围内
 	if cfg.Expire > 0 && exp-now > cfg.Expire {
 		return fmt.Errorf("signature expiration exceeds configured window")
 	}
@@ -82,6 +80,9 @@ func VerifySignature(r *http.Request, cfg config.SignatureConfig) error {
 	expected := hex.EncodeToString(mac.Sum(nil))
 
 	received := strings.ToLower(signRaw)
+
+	// 使用ConstantTimeCompare防止时序攻击
+	// 但是对于公开的图片资源来讲有没有必要呢？
 	if subtle.ConstantTimeCompare([]byte(received), []byte(expected)) != 1 {
 		return ErrSignatureInvalid
 	}
@@ -89,9 +90,15 @@ func VerifySignature(r *http.Request, cfg config.SignatureConfig) error {
 	return nil
 }
 
+// 构建规范字符串：
+// GET
+// /api/v1/query
+// a=1&b=2
+// 1703520000
 func buildCanonicalString(method, requestPath string, query url.Values, exp string) string {
 	canonicalQuery := url.Values{}
 	for key, values := range query {
+		// 筛除 sign 和 exp 参数，其他参数按原样保留
 		if strings.EqualFold(key, "sign") || strings.EqualFold(key, "exp") {
 			continue
 		}

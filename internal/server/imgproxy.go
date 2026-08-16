@@ -6,17 +6,18 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"path"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"filegate/config"
-	"filegate/internal/engine"
+	"github.com/thun888/filegate/config"
+	"github.com/thun888/filegate/internal/engine"
+	"github.com/thun888/filegate/internal/utils"
 )
 
 type imgproxyClient struct {
@@ -30,14 +31,34 @@ type imgproxyRequest struct {
 	SourceURL         string
 	Width             int
 	Height            int
-	Blur              int
+	Blur              float64
+	Quality           int
 	Format            string
 	MaxSourceFileSize int64
+	Watermark         config.WatermarkConfig
 }
+
+// imgproxyStatusError 携带 imgproxy 返回的 HTTP 状态码，供调用方区分处理（如 404 透传）。
+type imgproxyStatusError struct {
+	code int
+}
+
+func (e *imgproxyStatusError) Error() string {
+	return fmt.Sprintf("imgproxy returned status %d", e.code)
+}
+
+// ErrImgproxyNoProcessingOptions 表示请求没有任何可下发的处理选项
+// （宽高、质量、模糊、格式、水印均为空或 0）。
+var ErrImgproxyNoProcessingOptions = errors.New("no imgproxy processing options")
 
 func newImgproxyClient(cfg config.ImgproxyConfig) (*imgproxyClient, error) {
 	if strings.TrimSpace(cfg.URL) == "" {
 		return nil, nil
+	}
+
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 20 * time.Second
 	}
 
 	parsed, err := url.Parse(strings.TrimSpace(cfg.URL))
@@ -48,7 +69,7 @@ func newImgproxyClient(cfg config.ImgproxyConfig) (*imgproxyClient, error) {
 	return &imgproxyClient{
 		baseURL:    parsed,
 		signature:  cfg.Signature,
-		httpClient: &http.Client{Timeout: 20 * time.Second},
+		httpClient: &http.Client{Timeout: timeout},
 	}, nil
 }
 
@@ -58,25 +79,13 @@ func (s *Server) processWithImgproxy(req *http.Request, namespace, className, so
 		return nil, err
 	}
 
-	maxSourceFileSize, err := parseByteSize(rule.MaxFileSize)
+	maxSourceFileSize, err := utils.ParseByteSize(rule.MaxFileSize)
 	if err != nil {
 		return nil, fmt.Errorf("invalid max_file_size %q: %w", rule.MaxFileSize, err)
 	}
 
-	width := 0
-	if opts.WidthSet {
-		width = opts.Width
-	}
-
-	height := 0
-	if opts.HeightSet {
-		height = opts.Height
-	}
-
-	format := ""
-	if opts.FormatSet {
-		format = opts.Format
-	}
+	width := opts.Width
+	height := opts.Height
 
 	return s.imgproxy.Do(req.Context(), imgproxyRequest{
 		Method:            req.Method,
@@ -84,24 +93,26 @@ func (s *Server) processWithImgproxy(req *http.Request, namespace, className, so
 		Width:             width,
 		Height:            height,
 		Blur:              opts.Blur,
-		Format:            format,
+		Quality:           opts.Quality,
+		Format:            opts.Format,
 		MaxSourceFileSize: maxSourceFileSize,
+		Watermark:         rule.Watermark,
 	})
 }
 
 func (s *Server) buildServerOriginURL(namespace, className, sourcePath string) (string, error) {
-	domain := strings.TrimSpace(s.cfg.System.Server.Domain)
-	if domain == "" {
-		return "", fmt.Errorf("system.server.domain is empty")
+	baseURL := strings.TrimSpace(s.cfg.System.Server.BaseURL)
+	if baseURL == "" {
+		return "", fmt.Errorf("system.server.base_url is empty")
 	}
 
-	if !strings.HasPrefix(domain, "http://") && !strings.HasPrefix(domain, "https://") {
-		domain = "http://" + domain
+	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+		baseURL = "http://" + baseURL
 	}
 
-	base, err := url.Parse(domain)
+	base, err := url.Parse(baseURL)
 	if err != nil {
-		return "", fmt.Errorf("parse system.server.domain: %w", err)
+		return "", fmt.Errorf("parse system.server.base_url: %w", err)
 	}
 
 	cleanPath := path.Clean("/" + strings.TrimLeft(sourcePath, "/"))
@@ -122,18 +133,45 @@ func (c *imgproxyClient) Do(ctx context.Context, req imgproxyRequest) (*http.Res
 		return nil, fmt.Errorf("imgproxy is not configured")
 	}
 
-	processing := []string{
-		fmt.Sprintf("w:%d", req.Width),
-		fmt.Sprintf("h:%d", req.Height),
+	// 只下发显式设置过的选项：
+	// - w/h 为 0 表示不调整尺寸，不发送 resize 选项，由 imgproxy 保持原尺寸；
+	// - quality 为 0 表示不调整质量；
+	// - blur 为 0 表示不模糊。
+	processing := make([]string, 0, 6)
+	if req.Width > 0 {
+		processing = append(processing, fmt.Sprintf("w:%d", req.Width))
+	}
+	if req.Height > 0 {
+		processing = append(processing, fmt.Sprintf("h:%d", req.Height))
 	}
 	if req.MaxSourceFileSize > 0 {
 		processing = append(processing, fmt.Sprintf("msfs:%d", req.MaxSourceFileSize))
 	}
 	if req.Blur > 0 {
-		processing = append(processing, fmt.Sprintf("bl:%d", req.Blur))
+		processing = append(processing, "bl:"+strconv.FormatFloat(req.Blur, 'f', -1, 64))
+	}
+	if req.Quality > 0 {
+		processing = append(processing, fmt.Sprintf("q:%d", req.Quality))
 	}
 	if strings.TrimSpace(req.Format) != "" {
 		processing = append(processing, "f:"+strings.ToLower(strings.TrimPrefix(strings.TrimSpace(req.Format), ".")))
+	}
+	if req.Watermark.Enabled {
+		// wm:opacity:position:x_offset:y_offset:scale（需要在 imgproxy 端配置水印图）
+		processing = append(processing, strings.Join([]string{
+			"wm",
+			strconv.FormatFloat(req.Watermark.Opacity, 'f', -1, 64),
+			strings.ToLower(strings.TrimSpace(req.Watermark.Position)),
+			strconv.FormatFloat(req.Watermark.XOffset, 'f', -1, 64),
+			strconv.FormatFloat(req.Watermark.YOffset, 'f', -1, 64),
+			strconv.FormatFloat(req.Watermark.Scale, 'f', -1, 64),
+		}, ":"))
+	}
+
+	// 没有任何可下发的处理选项（宽高、质量、模糊、格式、水印全为空/0）时直接报错，
+	// 避免向 imgproxy 发出无意义的直通请求
+	if len(processing) == 0 {
+		return nil, ErrImgproxyNoProcessingOptions
 	}
 
 	sourceEncoded := base64.RawURLEncoding.EncodeToString([]byte(req.SourceURL))
@@ -169,7 +207,7 @@ func (c *imgproxyClient) Do(ctx context.Context, req imgproxyRequest) (*http.Res
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		defer resp.Body.Close()
-		return nil, fmt.Errorf("imgproxy returned status %d", resp.StatusCode)
+		return nil, &imgproxyStatusError{code: resp.StatusCode}
 	}
 
 	return resp, nil
@@ -206,42 +244,4 @@ func decodeSecret(raw string) []byte {
 	}
 
 	return []byte(v)
-}
-
-var byteSizePattern = regexp.MustCompile(`(?i)^([0-9]+)\s*([kmgt]?i?b?)?$`)
-
-func parseByteSize(raw string) (int64, error) {
-	v := strings.TrimSpace(raw)
-	if v == "" {
-		return 0, nil
-	}
-
-	match := byteSizePattern.FindStringSubmatch(v)
-	if len(match) != 3 {
-		return 0, fmt.Errorf("invalid size string")
-	}
-
-	baseValue, err := strconv.ParseInt(match[1], 10, 64)
-	if err != nil {
-		return 0, err
-	}
-
-	unit := strings.ToLower(match[2])
-	multiplier := int64(1)
-	switch unit {
-	case "", "b":
-		multiplier = 1
-	case "k", "kb", "kib":
-		multiplier = 1024
-	case "m", "mb", "mib":
-		multiplier = 1024 * 1024
-	case "g", "gb", "gib":
-		multiplier = 1024 * 1024 * 1024
-	case "t", "tb", "tib":
-		multiplier = 1024 * 1024 * 1024 * 1024
-	default:
-		return 0, fmt.Errorf("unsupported size unit %q", unit)
-	}
-
-	return baseValue * multiplier, nil
 }
