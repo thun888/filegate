@@ -25,6 +25,7 @@ import (
 //
 //go:embed res_code/*
 var resCodeImages embed.FS
+var Version = "dev"
 
 // Server 封装了 FileGate 的 HTTP 服务。
 type Server struct {
@@ -97,10 +98,10 @@ func New(cfg *config.Config) (*Server, error) {
 	errorImages = preloadErrorImages()
 
 	httpEngine.GET("/ping", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"message": "pong"})
+		c.JSON(http.StatusOK, gin.H{"message": "pong", "version": Version})
 	})
 	httpEngine.GET("/healthz", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": Version})
 	})
 	if cfg.System.Metrics.Prometheus {
 		httpEngine.GET("/metrics", gin.WrapH(promhttp.Handler()))
