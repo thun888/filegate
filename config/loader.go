@@ -227,13 +227,19 @@ func validate(cfg *Config) error {
 			}
 			classNames[clsKey] = struct{}{}
 
-			if cls.FileConversion.Enabled {
-				if strings.TrimSpace(cls.FileConversion.Rule) == "" {
-					return fmt.Errorf("class %q in namespace %q enables file_conversion but has empty rule", cls.Name, ns.Name)
+			seenRules := make(map[string]struct{}, len(cls.FileConversion))
+			for _, fc := range cls.FileConversion {
+				if strings.TrimSpace(fc.Rule) == "" {
+					return fmt.Errorf("class %q in namespace %q has file_conversion entry with empty rule", cls.Name, ns.Name)
 				}
-				if _, exists := ruleNames[NormalizeKey(cls.FileConversion.Rule)]; !exists {
-					return fmt.Errorf("class %q in namespace %q references unknown conversion rule %q", cls.Name, ns.Name, cls.FileConversion.Rule)
+				fcKey := NormalizeKey(fc.Rule)
+				if _, exists := ruleNames[fcKey]; !exists {
+					return fmt.Errorf("class %q in namespace %q references unknown conversion rule %q", cls.Name, ns.Name, fc.Rule)
 				}
+				if _, dup := seenRules[fcKey]; dup {
+					return fmt.Errorf("class %q in namespace %q references conversion rule %q more than once", cls.Name, ns.Name, fc.Rule)
+				}
+				seenRules[fcKey] = struct{}{}
 			}
 
 			if cls.Security.Signature.Enabled && strings.TrimSpace(cls.Security.Signature.Secret) == "" {

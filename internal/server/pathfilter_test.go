@@ -34,6 +34,9 @@ func TestHandleFetch_PathFilterAppliesToSourcePath(t *testing.T) {
 		BackendPolicies: []config.BackendPolicy{
 			{Name: "p1", Strategy: "single", Backends: []string{"local"}},
 		},
+		FileConversionRules: []config.FileConversionRule{
+			{Name: "r1"},
+		},
 		Namespaces: []config.NamespaceConfig{
 			{
 				Name:          "ns1",
@@ -47,9 +50,11 @@ func TestHandleFetch_PathFilterAppliesToSourcePath(t *testing.T) {
 								AllowExtensions: []string{"jpg"},
 							},
 						},
-						// FileConversion 开启但 imgproxy 未配置时，转换后缀会被剥离，
+						// 转换请求显式选择规则（!r1）；imgproxy 未配置时转换后缀会被剥离，
 						// 请求直接落到后端——PathFilter 必须校验剥离后的路径。
-						FileConversion: config.ClassFileConversionConfig{Enabled: true, Rule: ""},
+						FileConversion: []config.ClassFileConversionConfig{
+							{Rule: "r1"},
+						},
 					},
 				},
 			},
@@ -64,7 +69,7 @@ func TestHandleFetch_PathFilterAppliesToSourcePath(t *testing.T) {
 
 	t.Run("deny pattern cannot be bypassed via transform suffix", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/fs/ns1/cls1/secret.txt@100w.jpg", nil)
+		req := httptest.NewRequest(http.MethodGet, "/fs/ns1/cls1/secret.txt@100w_!r1.jpg", nil)
 		handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusForbidden {
@@ -74,7 +79,7 @@ func TestHandleFetch_PathFilterAppliesToSourcePath(t *testing.T) {
 
 	t.Run("allowed file with transform suffix still works", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/fs/ns1/cls1/a.jpg@300w", nil)
+		req := httptest.NewRequest(http.MethodGet, "/fs/ns1/cls1/a.jpg@300w_!r1", nil)
 		handler.ServeHTTP(w, req)
 
 		if w.Code != http.StatusOK {

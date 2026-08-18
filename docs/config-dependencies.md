@@ -14,7 +14,8 @@ namespaces[].class[]
    │     ├── refer_check.enabled      ──依赖──► refer_check.allowed_referers（非空才有效）
    │     ├── signature.enabled        ──依赖──► signature.secret（必填）
    │     └── path_filter              （自包含，空配置 = 全部放行）
-   ├── file_conversion.enabled+rule   ──引用──►  file_conversion_rules[].name
+   ├── file_conversion[].rule      ──引用──►  file_conversion_rules[].name
+   │     ├── 规则选择：路径后缀 !rulename 或 query rule=；均未指定 → 不做转换
    │     ├── 运行期 ──依赖──►  service.imgproxy.url（未配置则转换静默失效）
    │     └── service.imgproxy         ──依赖──►  system.server.base_url（生成 /origin/ 回源地址）
    └── response_headers               （独立，无依赖）
@@ -31,7 +32,7 @@ system.server.base_url    →  仅 imgproxy 链路使用；缺省时由 host:por
 |---|---|---|
 | `namespaces[].backend_policy` | `backend_policy[].name` | 必填；引用不存在的策略 → 启动报错 |
 | `backend_policy[].backends[]` | `backends[].name` | 至少一个后端可解析，否则报错；运行期若某个名字不存在，`OrderedBackends` 返回错误（502） |
-| `class[].file_conversion.rule` | `file_conversion_rules[].name` | 仅当 `file_conversion.enabled: true` 时必填且必须存在，否则报错 |
+| `class[].file_conversion[].rule` | `file_conversion_rules[].name` | 每个条目必填且必须存在；同一 class 内不得重复引用，否则报错 |
 | （无引用）`class[].security.*` | — | 三类安全策略彼此独立，可与上述任意组合 |
 
 唯一性约束：`backends[].name`、`backend_policy[].name`、`file_conversion_rules[].name`、
@@ -76,17 +77,21 @@ system.server.base_url    →  仅 imgproxy 链路使用；缺省时由 host:por
 ## 5. file_conversion 链路：三层引用 + 运行期交叉依赖
 
 ```
-class.file_conversion.enabled ──► class.file_conversion.rule ──► file_conversion_rules[].name
-                                       │
-                                       ├── enable_request_params：query 参数覆盖开关 + 范围限制
-                                       │     ├── width/height/quality：enabled 开关 + min/max 范围限制
-                                       │     └── blur/format：bool 开关
-                                       ├── default_params：未指定参数时的兜底值（blur 为高斯模糊 sigma，浮点）
-                                       ├── supported_formats：输出格式白名单（空 = 不限制）
-                                       ├── max_file_size：仅 imgproxy 链路使用（msfs 选项，启动时校验格式）
-                                       └── watermark：enabled 时向 imgproxy 下发 wm: 选项
-                                             （需要 imgproxy Pro 并在 imgproxy 端配置水印图；
-                                              position/opacity 启动时校验）
+class.file_conversion[]                          （类别级：可用规则白名单 + 参数开关）
+    ├── rule        ──引用──►  file_conversion_rules[].name
+    └── enable_request_params：query/后缀参数覆盖开关 + 范围限制
+          ├── width/height/quality：enabled 开关 + min/max 范围限制
+          └── blur/format：bool 开关
+
+file_conversion_rules[]                          （规则级：转换预设）
+    ├── default_params：未指定参数时的兜底值（blur 为高斯模糊 sigma，浮点）
+    ├── max_file_size：仅 imgproxy 链路使用（msfs 选项，启动时校验格式）
+    └── watermark：enabled 时向 imgproxy 下发 wm: 选项
+          （需要 imgproxy Pro 并在 imgproxy 端配置水印图；
+           position/opacity 启动时校验）
+
+规则选择（请求级）：路径后缀 !rulename 或 query rule=；
+两者冲突 → 400；均未指定 → 不做转换，按原始路径直接回源。
 ```
 
 **最重要的运行期依赖**：转换真正发生需要 `service.imgproxy.url` 非空。
@@ -117,6 +122,8 @@ class.file_conversion.enabled ──► class.file_conversion.rule ──► fil
 
 注：`zip`（`default_params.zip` / `enable_request_params.zip`）已从配置结构**移除**——imgproxy
 没有对应的 zip 处理选项，保留会造成"配置了没效果"的误导；`watermark` 现已实现（见 §5）。
+`supported_formats` 也已移除——输出格式不再做白名单校验，仅受
+`enable_request_params.format` 开关控制。
 
 ## 8. 常见配置错误对照（均会在启动时被拒绝）
 
@@ -125,7 +132,7 @@ class.file_conversion.enabled ──► class.file_conversion.rule ──► fil
 | 没有任何 `backends` | `at least one backend is required` |
 | `namespace.backend_policy` 指向不存在的策略 | `references unknown backend policy` |
 | `backend_policy.backends` 全部不可解析 | `has no resolvable backend` |
-| 启用转换但 `rule` 为空/不存在 | `enables file_conversion but has empty rule` / `references unknown conversion rule` |
+| file_conversion 条目 `rule` 为空/引用不存在 | `file_conversion entry with empty rule` / `references unknown conversion rule` |
 | 启用签名但 `secret` 为空 | `enables signature but secret is empty` |
 | imgproxy 签名启用但 `url`/`key`/`salt` 缺失 | `imgproxy signature enabled but ...` |
 | `base_url` 不是合法 URL | `invalid system.server.base_url` |

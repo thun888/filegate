@@ -34,19 +34,62 @@ func NewProcessor(lookupRule RuleLookup) *Processor {
 	return &Processor{lookupRule}
 }
 
-// ParseRequest 解析请求路径和查询参数，返回源路径和转换选项。
-func (p *Processor) ParseRequest(classCfg config.ClassConfig, objectPath string, query url.Values) (string, TransformOptions, error) {
+// transformParam 是路径后缀中单个已识别的参数段。
+type transformParam struct {
+	field string
+	value string
+}
+
+// pathTransform 是路径转换后缀的结构化解析结果。
+type pathTransform struct {
+	sourcePath string
+	ruleName   string
+	format     string
+	hasFormat  bool
+	params     []transformParam
+}
+
+// ParseRequest 解析请求路径和查询参数，返回源路径、转换选项与被选中的规则。
+// 规则通过路径后缀 !rulename 或查询参数 rule= 选择，两者冲突时报错；
+// 均未指定时不转换、原样返回路径。
+func (p *Processor) ParseRequest(classCfg config.ClassConfig, objectPath string, query url.Values) (string, TransformOptions, config.FileConversionRule, error) {
 	normalizedPath, err := utils.NormalizePath(objectPath)
 	if err != nil {
-		return "", TransformOptions{}, err
+		return "", TransformOptions{}, config.FileConversionRule{}, err
 	}
 
-	if !classCfg.FileConversion.Enabled {
-		return normalizedPath, TransformOptions{}, nil
+	if len(classCfg.FileConversion) == 0 {
+		return normalizedPath, TransformOptions{}, config.FileConversionRule{}, nil
 	}
 
-	rule := p.lookupRule(classCfg.FileConversion.Rule)
+	queryRule := strings.TrimSpace(query.Get("rule"))
+	if queryRule == "" && !strings.Contains(normalizedPath, "!") {
+		return normalizedPath, TransformOptions{}, config.FileConversionRule{}, nil
+	}
 
+	pt, err := parsePathTransform(normalizedPath)
+	if err != nil {
+		return "", TransformOptions{}, config.FileConversionRule{}, err
+	}
+
+	if queryRule != "" && pt.ruleName != "" && config.NormalizeKey(queryRule) != config.NormalizeKey(pt.ruleName) {
+		return "", TransformOptions{}, config.FileConversionRule{}, fmt.Errorf("conflicting rule selectors %q (path) and %q (query)", pt.ruleName, queryRule)
+	}
+
+	ruleName := pt.ruleName
+	if ruleName == "" {
+		ruleName = queryRule
+	}
+	if ruleName == "" {
+		return normalizedPath, TransformOptions{}, config.FileConversionRule{}, nil
+	}
+
+	entry, ok := findConversionEntry(classCfg.FileConversion, ruleName)
+	if !ok {
+		return "", TransformOptions{}, config.FileConversionRule{}, fmt.Errorf("conversion rule %q is not enabled for this class", ruleName)
+	}
+
+	rule := p.lookupRule(entry.Rule)
 	opts := TransformOptions{
 		Enabled: true,
 		Width:   rule.DefaultParams.Width,
@@ -56,123 +99,143 @@ func (p *Processor) ParseRequest(classCfg config.ClassConfig, objectPath string,
 		Format:  strings.ToLower(strings.TrimPrefix(rule.DefaultParams.Format, ".")),
 	}
 
-	// 路径转换后缀（@... 形式）按 @ → . → _ 三级拆分后逐段匹配。
-	sourcePath, err := parsePathTransform(normalizedPath, rule, &opts)
-	if err != nil {
-		return "", TransformOptions{}, err
+	if pt.hasFormat && entry.EnableRequestParams.Format {
+		opts.Format = strings.ToLower(pt.format)
 	}
-
-	// 查询参数与路径后缀同名字段时覆盖后缀值；未启用的参数一律静默忽略。
-	if v := strings.TrimSpace(query.Get("width")); v != "" && rule.EnableRequestParams.Width.Enabled {
-		opts.Width, err = parsePositiveInt("width", v)
-		if err != nil {
-			return "", TransformOptions{}, err
+	for _, pm := range pt.params {
+		if err := applyTransformParam(entry.EnableRequestParams, &opts, pm.field, pm.value); err != nil {
+			return "", TransformOptions{}, config.FileConversionRule{}, err
 		}
 	}
 
-	if v := strings.TrimSpace(query.Get("height")); v != "" && rule.EnableRequestParams.Height.Enabled {
-		opts.Height, err = parsePositiveInt("height", v)
-		if err != nil {
-			return "", TransformOptions{}, err
+	// 查询参数覆盖路径后缀值；未启用的参数一律静默忽略。
+	params := entry.EnableRequestParams
+	if v := strings.TrimSpace(query.Get("width")); v != "" && params.Width.Enabled {
+		if opts.Width, err = parsePositiveInt("width", v); err != nil {
+			return "", TransformOptions{}, config.FileConversionRule{}, err
 		}
 	}
-
-	if v := strings.TrimSpace(query.Get("quality")); v != "" && rule.EnableRequestParams.Quality.Enabled {
-		opts.Quality, err = parsePositiveInt("quality", v)
-		if err != nil {
-			return "", TransformOptions{}, err
+	if v := strings.TrimSpace(query.Get("height")); v != "" && params.Height.Enabled {
+		if opts.Height, err = parsePositiveInt("height", v); err != nil {
+			return "", TransformOptions{}, config.FileConversionRule{}, err
 		}
 	}
-
-	if v := strings.TrimSpace(query.Get("blur")); v != "" && rule.EnableRequestParams.Blur {
+	if v := strings.TrimSpace(query.Get("quality")); v != "" && params.Quality.Enabled {
+		if opts.Quality, err = parsePositiveInt("quality", v); err != nil {
+			return "", TransformOptions{}, config.FileConversionRule{}, err
+		}
+	}
+	if v := strings.TrimSpace(query.Get("blur")); v != "" && params.Blur {
 		level, err := strconv.Atoi(v)
 		if err != nil || level < 0 {
-			return "", TransformOptions{}, fmt.Errorf("invalid blur value %q: expected non-negative integer", v)
+			return "", TransformOptions{}, config.FileConversionRule{}, fmt.Errorf("invalid blur value %q: expected non-negative integer", v)
 		}
 		opts.Blur = float64(level) / 10
 	}
-
-	if v := strings.TrimSpace(query.Get("format")); v != "" && rule.EnableRequestParams.Format {
+	if v := strings.TrimSpace(query.Get("format")); v != "" && params.Format {
 		opts.Format = strings.ToLower(strings.TrimPrefix(v, "."))
 	}
 
 	// 0 表示不调整，跳过范围校验
 	if opts.Width != 0 {
-		if err := validateRange("width", opts.Width, rule.EnableRequestParams.Width); err != nil {
-			return "", TransformOptions{}, err
+		if err := validateRange("width", opts.Width, params.Width); err != nil {
+			return "", TransformOptions{}, config.FileConversionRule{}, err
 		}
 	}
 	if opts.Height != 0 {
-		if err := validateRange("height", opts.Height, rule.EnableRequestParams.Height); err != nil {
-			return "", TransformOptions{}, err
+		if err := validateRange("height", opts.Height, params.Height); err != nil {
+			return "", TransformOptions{}, config.FileConversionRule{}, err
 		}
 	}
-	if err := validateRange("quality", opts.Quality, rule.EnableRequestParams.Quality); err != nil {
-		return "", TransformOptions{}, err
-	}
-	if err := validateFormat(opts.Format, rule.SupportedFormats); err != nil {
-		return "", TransformOptions{}, err
+	if opts.Quality != 0 {
+		if err := validateRange("quality", opts.Quality, params.Quality); err != nil {
+			return "", TransformOptions{}, config.FileConversionRule{}, err
+		}
 	}
 
-	return sourcePath, opts, nil
+	return pt.sourcePath, opts, rule, nil
+}
+
+// findConversionEntry 在类别的转换配置中按名称（大小写不敏感）查找条目。
+func findConversionEntry(entries []config.ClassFileConversionConfig, name string) (config.ClassFileConversionConfig, bool) {
+	key := config.NormalizeKey(name)
+	for _, e := range entries {
+		if config.NormalizeKey(e.Rule) == key {
+			return e, true
+		}
+	}
+	return config.ClassFileConversionConfig{}, false
 }
 
 // parsePathTransform 解析路径中的转换后缀（@... 形式）。
-// 语法：@<param>[_<param>...][.<format>]
+// 语法：@[<param>|!<rulename>][_...][.<format>]
+//   - !<rulename> → 规则选择器
 //   - <digits>w → 宽度（w 可大写）
 //   - <digits>h → 高度（h 可大写）
 //   - <digits>b → 高斯模糊 sigma×10（整数，如 5b=0.5，b 可大写）
 //   - <digits>q → 质量（q 可大写）
 //   - .<ext>    → 输出格式（纯字母扩展名，如 .webp）
 //
-// 各参数顺序无关、可部分省略（宽度不再必填）；宽度/高度为 0 表示保持原尺寸。
-// 路径不含 @ 时原样返回；解析失败返回带具体段名的错误。
-func parsePathTransform(normalizedPath string, rule config.FileConversionRule, opts *TransformOptions) (string, error) {
+// 各段顺序无关、可部分省略；宽度/高度为 0 表示保持原尺寸。
+// 路径不含 @ 时源路径原样返回；解析失败返回带具体段名的错误。
+func parsePathTransform(normalizedPath string) (*pathTransform, error) {
 	at := strings.LastIndex(normalizedPath, "@")
 	if at < 0 {
-		return normalizedPath, nil
+		return &pathTransform{sourcePath: normalizedPath}, nil
 	}
 
 	sourcePath := normalizedPath[:at]
 	if sourcePath == "" {
-		return "", fmt.Errorf("invalid transformed path %q: missing source path before @", normalizedPath)
+		return nil, fmt.Errorf("invalid transformed path %q: missing source path before @", normalizedPath)
 	}
 
 	spec := normalizedPath[at+1:]
 	if strings.TrimSpace(spec) == "" {
-		return "", fmt.Errorf("empty transform suffix in %q", normalizedPath)
+		return nil, fmt.Errorf("empty transform suffix in %q", normalizedPath)
 	}
+
+	pt := &pathTransform{sourcePath: sourcePath}
 
 	// 分离输出格式：最后一个点之后为纯字母扩展名、且其前部分为空或全是合法参数段时
 	// 才视为格式；否则整个 spec 按参数段解析。
 	paramsStr, format, hasFormat := splitTransformSpec(spec)
-	if hasFormat && rule.EnableRequestParams.Format {
-		opts.Format = strings.ToLower(format)
-	}
+	pt.format = format
+	pt.hasFormat = hasFormat
 
 	seen := make(map[string]struct{}, 4)
-	if paramsStr != "" {
-		for _, part := range strings.Split(paramsStr, "_") {
-			if part == "" {
-				return "", fmt.Errorf("empty transform param segment in %q", normalizedPath)
-			}
-
-			field, value, ok := matchTransformPart(part)
-			if !ok {
-				return "", fmt.Errorf("invalid transform param %q in %q", part, normalizedPath)
-			}
-			if _, dup := seen[field]; dup {
-				return "", fmt.Errorf("duplicate transform param %q in %q", part, normalizedPath)
-			}
-			seen[field] = struct{}{}
-
-			if err := applyTransformParam(rule, opts, field, value); err != nil {
-				return "", err
-			}
+	for _, part := range strings.Split(paramsStr, "_") {
+		if part == "" {
+			return nil, fmt.Errorf("empty transform param segment in %q", normalizedPath)
 		}
+
+		if name, ok := ruleSelectorName(part); ok {
+			if pt.ruleName != "" {
+				return nil, fmt.Errorf("duplicate rule selector %q in %q", part, normalizedPath)
+			}
+			pt.ruleName = name
+			continue
+		}
+
+		field, value, ok := matchTransformPart(part)
+		if !ok {
+			return nil, fmt.Errorf("invalid transform param %q in %q", part, normalizedPath)
+		}
+		if _, dup := seen[field]; dup {
+			return nil, fmt.Errorf("duplicate transform param %q in %q", part, normalizedPath)
+		}
+		seen[field] = struct{}{}
+		pt.params = append(pt.params, transformParam{field, value})
 	}
 
-	return sourcePath, nil
+	return pt, nil
+}
+
+// ruleSelectorName 判断参数段是否为 !rulename 形式的规则选择器。
+func ruleSelectorName(part string) (string, bool) {
+	if len(part) >= 2 && part[0] == '!' {
+		return part[1:], true
+	}
+	return "", false
 }
 
 // splitTransformSpec 将 @ 之后的转换说明按 <params>.<format> 拆分。
@@ -208,6 +271,9 @@ func transformParamsWellFormed(params string) bool {
 	for _, part := range strings.Split(params, "_") {
 		if part == "" {
 			return false
+		}
+		if _, ok := ruleSelectorName(part); ok {
+			continue
 		}
 		if _, _, ok := matchTransformPart(part); !ok {
 			return false
@@ -274,10 +340,10 @@ func isAlpha(s string) bool {
 
 // applyTransformParam 将单个已识别的路径后缀参数应用到转换选项。
 // 未在 enable_request_params 中启用的字段静默忽略。
-func applyTransformParam(rule config.FileConversionRule, opts *TransformOptions, field, value string) error {
+func applyTransformParam(params config.RequestParamsConfig, opts *TransformOptions, field, value string) error {
 	switch field {
 	case "width":
-		if !rule.EnableRequestParams.Width.Enabled {
+		if !params.Width.Enabled {
 			return nil
 		}
 		w, err := strconv.Atoi(value)
@@ -286,7 +352,7 @@ func applyTransformParam(rule config.FileConversionRule, opts *TransformOptions,
 		}
 		opts.Width = w
 	case "height":
-		if !rule.EnableRequestParams.Height.Enabled {
+		if !params.Height.Enabled {
 			return nil
 		}
 		h, err := strconv.Atoi(value)
@@ -295,7 +361,7 @@ func applyTransformParam(rule config.FileConversionRule, opts *TransformOptions,
 		}
 		opts.Height = h
 	case "quality":
-		if !rule.EnableRequestParams.Quality.Enabled {
+		if !params.Quality.Enabled {
 			return nil
 		}
 		q, err := strconv.Atoi(value)
@@ -304,7 +370,7 @@ func applyTransformParam(rule config.FileConversionRule, opts *TransformOptions,
 		}
 		opts.Quality = q
 	case "blur":
-		if !rule.EnableRequestParams.Blur {
+		if !params.Blur {
 			return nil
 		}
 		level, err := strconv.Atoi(value)
@@ -372,28 +438,3 @@ func validateRange(fieldName string, value int, r config.ParamRange) error {
 
 	return nil
 }
-
-// validateFormat 验证输出格式是否在支持列表中。
-func validateFormat(format string, supportedFormats []string) error {
-	if len(supportedFormats) == 0 || format == "" {
-		return nil
-	}
-
-	target := strings.ToLower(strings.TrimPrefix(format, "."))
-	for _, candidate := range supportedFormats {
-		if target == strings.ToLower(strings.TrimPrefix(candidate, ".")) {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("unsupported output format %q", format)
-}
-
-// normalizeBlurLevel 标准化模糊级别，确保非负。
-// func normalizeBlurLevel(level int) int {
-// 	if level < 0 {
-// 		return 0
-// 	}
-
-// 	return level
-// }

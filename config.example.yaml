@@ -34,9 +34,11 @@ backend_policy:
       - backend1
       - backend2
 
-# 对应路径：http://localhost:8080/fs/{namespace}/{class}/{path}.jpg@{width}w_{height}h_{blur}b_{quality}q.{format}
-# 转换后缀按段解析（<数字>w=宽度, <数字>h=高度, <数字>b=模糊(sigma×10), <数字>q=质量, .<扩展名>=输出格式）：
-# 顺序无关、可部分省略（如 @600h、@.webp、@70q），宽度/高度为 0 表示保持原尺寸；
+# 对应路径：http://localhost:8080/fs/{namespace}/{class}/{path}.jpg@!{rule}_{width}w_{height}h_{blur}b_{quality}q.{format}
+# 规则选择：路径后缀段 !{rule}（如 @!png_conversion_320w）或查询参数 rule={rule}（如 ?rule=png_conversion）。
+# 两者同时给出且不一致时报 400；均未给出时不做转换，按原始路径直接回源。
+# 转换后缀按段解析（!{rule}=规则选择器, <数字>w=宽度, <数字>h=高度, <数字>b=模糊(sigma×10), <数字>q=质量, .<扩展名>=输出格式）：
+# 顺序无关、可部分省略（如 @!png_conversion_600h、@!png_conversion_70q.webp），宽度/高度为 0 表示保持原尺寸；
 # 未在 enable_request_params 中启用的字段会被静默忽略（查询参数与路径后缀同策略）。
 # blur 为高斯模糊 sigma×10 的整数（如 5b 表示 0.5，15b 表示 1.5），0b 或省略表示不模糊
 namespaces:
@@ -76,8 +78,22 @@ namespaces:
               - webp
         # 文件处理
         file_conversion:
-          enabled: true
-          rule: "png_conversion" 
+          - rule: "png_conversion"
+            enable_request_params:
+              width:
+                enabled: true
+                min: 1
+                max: 8192
+              height:
+                enabled: true
+                min: 1
+                max: 8192
+              quality:
+                enabled: true
+                min: 10
+                max: 95
+              blur: true
+              format: true
         # 响应头设置
         response_headers:
           Cache-Control: "public,max-age=3600"
@@ -86,23 +102,6 @@ namespaces:
 file_conversion_rules:
   - name: "png_conversion"
     max_file_size: "100MB"
-    supported_formats:
-      - "png"
-    enable_request_params:
-      width:
-        enabled: true
-        min: 1
-        max: 8192
-      height:
-        enabled: true
-        min: 1
-        max: 8192
-      quality:
-        enabled: true
-        min: 10
-        max: 95
-      blur: true
-      format: true
     default_params:
       width: 800
       height: 600

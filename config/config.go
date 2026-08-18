@@ -60,10 +60,10 @@ type NamespaceConfig struct {
 
 // ClassConfig 定义命名空间下的类别配置。
 type ClassConfig struct {
-	Name            string                    `yaml:"name"`             // 类别名称，用于URL路径路由
-	Security        SecurityConfig            `yaml:"security"`         // 安全相关配置
-	FileConversion  ClassFileConversionConfig `yaml:"file_conversion"`  // 文件转换配置
-	ResponseHeaders map[string]string         `yaml:"response_headers"` // 自定义响应头
+	Name            string                      `yaml:"name"`             // 类别名称，用于URL路径路由
+	Security        SecurityConfig              `yaml:"security"`         // 安全相关配置
+	FileConversion  []ClassFileConversionConfig `yaml:"file_conversion"`  // 文件转换配置（可用规则列表）
+	ResponseHeaders map[string]string           `yaml:"response_headers"` // 自定义响应头
 }
 
 // SecurityConfig 包含安全相关的配置项。
@@ -94,19 +94,18 @@ type PathFilterConfig struct {
 }
 
 // ClassFileConversionConfig 定义类别级别的文件转换配置。
+// 每个条目关联一个转换规则，并定义该类别下允许客户端覆盖的参数开关。
 type ClassFileConversionConfig struct {
-	Enabled bool   `yaml:"enabled"` // 是否启用文件转换
-	Rule    string `yaml:"rule"`    // 使用的转换规则名称
+	Rule                string              `yaml:"rule"`                  // 使用的转换规则名称
+	EnableRequestParams RequestParamsConfig `yaml:"enable_request_params"` // 允许通过请求参数覆盖的转换选项
 }
 
 // FileConversionRule 定义文件转换规则的完整配置。
 type FileConversionRule struct {
-	Name                string                  `yaml:"name"`                  // 规则名称，用于在类别中引用
-	MaxFileSize         string                  `yaml:"max_file_size"`         // 最大文件大小限制，如"10MB"
-	SupportedFormats    []string                `yaml:"supported_formats"`     // 支持的源文件格式列表
-	EnableRequestParams RequestParamsConfig     `yaml:"enable_request_params"` // 允许通过请求参数覆盖的转换选项
-	DefaultParams       ConversionDefaultParams `yaml:"default_params"`        // 转换的默认参数值
-	Watermark           WatermarkConfig         `yaml:"watermark"`             // 水印配置
+	Name          string                  `yaml:"name"`           // 规则名称，用于在类别中引用
+	MaxFileSize   string                  `yaml:"max_file_size"`  // 最大文件大小限制，如"10MB"
+	DefaultParams ConversionDefaultParams `yaml:"default_params"` // 转换的默认参数值
+	Watermark     WatermarkConfig         `yaml:"watermark"`      // 水印配置
 }
 
 // RequestParamsConfig 定义可通过请求参数覆盖的转换选项。
@@ -173,8 +172,8 @@ type SystemConfig struct {
 // ServerConfig 定义 HTTP 服务器配置。
 type ServerConfig struct {
 	BaseURL string `yaml:"base_url"` // 服务器基础URL，用于生成完整URL
-	Host   string `yaml:"host"`   // 监听主机地址
-	Port   int    `yaml:"port"`   // 监听端口
+	Host    string `yaml:"host"`     // 监听主机地址
+	Port    int    `yaml:"port"`     // 监听端口
 }
 
 // LoggingConfig 定义日志配置。

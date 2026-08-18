@@ -157,7 +157,7 @@ func (s *Server) handleFetch(c *gin.Context) {
 		abortWithError(c, http.StatusUnauthorized, err)
 		return
 	}
-	sourcePath, transformOptions, err := s.processor.ParseRequest(route.Class, rawObjectPath, c.Request.URL.Query())
+	sourcePath, transformOptions, rule, err := s.processor.ParseRequest(route.Class, rawObjectPath, c.Request.URL.Query())
 	if err != nil {
 		abortWithError(c, http.StatusBadRequest, err)
 		return
@@ -172,8 +172,6 @@ func (s *Server) handleFetch(c *gin.Context) {
 
 	// 处理转换请求
 	if transformOptions.Enabled && s.imgproxy != nil {
-		rule := s.router.FileConversionRule(route.Class.FileConversion.Rule)
-
 		imgResp, processErr := s.processWithImgproxy(c.Request, namespace, className, sourcePath, transformOptions, rule)
 		if processErr != nil {
 			// 没有任何可下发的处理选项属于客户端请求/配置问题，返回 400
@@ -280,8 +278,8 @@ func (s *Server) handleOriginFetch(c *gin.Context) {
 	}
 
 	classCfg := route.Class
-	classCfg.FileConversion.Enabled = false
-	sourcePath, _, err := s.processor.ParseRequest(classCfg, rawObjectPath, c.Request.URL.Query())
+	classCfg.FileConversion = nil
+	sourcePath, _, _, err := s.processor.ParseRequest(classCfg, rawObjectPath, c.Request.URL.Query())
 	if err != nil {
 		abortWithError(c, http.StatusBadRequest, err)
 		return
