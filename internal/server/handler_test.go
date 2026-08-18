@@ -68,10 +68,11 @@ func TestErrorImageName(t *testing.T) {
 		want       string
 	}{
 		{statusCode: http.StatusNotFound, want: "404.png"},
-		{statusCode: http.StatusUnauthorized, want: "400.png"},
-		{statusCode: http.StatusTooManyRequests, want: "400.png"},
-		{statusCode: http.StatusBadGateway, want: "500.png"},
-		{statusCode: http.StatusServiceUnavailable, want: "500.png"},
+		{statusCode: http.StatusForbidden, want: "403.png"},
+		{statusCode: http.StatusUnauthorized, want: ""},
+		{statusCode: http.StatusTooManyRequests, want: ""},
+		{statusCode: http.StatusBadGateway, want: "5xx.png"},
+		{statusCode: http.StatusServiceUnavailable, want: "5xx.png"},
 		{statusCode: http.StatusCreated, want: ""},
 	}
 
@@ -84,6 +85,9 @@ func TestErrorImageName(t *testing.T) {
 
 func TestAbortWithError_ReturnsImageAndNoCache(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+
+	// abortWithError 依赖启动时预加载的错误图片缓存，测试中手动初始化
+	errorImages = preloadErrorImages()
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -126,21 +130,35 @@ func TestAbortWithError_ReturnsImageAndNoCache(t *testing.T) {
 func TestAbortWithError_HEADNoBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodHead, "/limited", nil)
+	// abortWithError 依赖启动时预加载的错误图片缓存，测试中手动初始化
+	errorImages = preloadErrorImages()
 
-	abortWithError(c, http.StatusTooManyRequests, errors.New("too many requests"))
-
-	if w.Code != http.StatusTooManyRequests {
-		t.Fatalf("status = %d, want %d", w.Code, http.StatusTooManyRequests)
+	// 无论是否有对应的错误图片，HEAD 响应都必须为空响应体
+	tests := []struct {
+		name       string
+		statusCode int
+	}{
+		{name: "no error image (429)", statusCode: http.StatusTooManyRequests},
+		{name: "with error image (404)", statusCode: http.StatusNotFound},
 	}
 
-	if w.Body.Len() != 0 {
-		t.Fatalf("head response should be empty body, got %d bytes", w.Body.Len())
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodHead, "/limited", nil)
 
-	if got := w.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate, max-age=0" {
-		t.Fatalf("Cache-Control = %q", got)
+			abortWithError(c, tt.statusCode, errors.New("err"))
+
+			if w.Code != tt.statusCode {
+				t.Fatalf("status = %d, want %d", w.Code, tt.statusCode)
+			}
+			if w.Body.Len() != 0 {
+				t.Fatalf("head response should be empty body, got %d bytes", w.Body.Len())
+			}
+			if got := w.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate, max-age=0" {
+				t.Fatalf("Cache-Control = %q", got)
+			}
+		})
 	}
 }

@@ -34,8 +34,11 @@ backend_policy:
       - backend1
       - backend2
 
-# 对应路径：http://localhost:8080/fs/{namespace}/{class}/{path}.jpg@{width}w_{height}h_{blur}_{quality}.{format}
-# blur 为高斯模糊 sigma（浮点，如 0.5b），0b 或省略表示不模糊
+# 对应路径：http://localhost:8080/fs/{namespace}/{class}/{path}.jpg@{width}w_{height}h_{blur}b_{quality}q.{format}
+# 转换后缀按段解析（<数字>w=宽度, <数字>h=高度, <数字>b=模糊(sigma×10), <数字>q=质量, .<扩展名>=输出格式）：
+# 顺序无关、可部分省略（如 @600h、@.webp、@70q），宽度/高度为 0 表示保持原尺寸；
+# 未在 enable_request_params 中启用的字段会被静默忽略（查询参数与路径后缀同策略）。
+# blur 为高斯模糊 sigma×10 的整数（如 5b 表示 0.5，15b 表示 1.5），0b 或省略表示不模糊
 namespaces:
   - name: "namespace1"
     backend_policy: "policy1"
@@ -87,12 +90,15 @@ file_conversion_rules:
       - "png"
     enable_request_params:
       width:
+        enabled: true
         min: 1
         max: 8192
       height:
+        enabled: true
         min: 1
         max: 8192
       quality:
+        enabled: true
         min: 10
         max: 95
       blur: true

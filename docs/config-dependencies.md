@@ -79,7 +79,7 @@ system.server.base_url    →  仅 imgproxy 链路使用；缺省时由 host:por
 class.file_conversion.enabled ──► class.file_conversion.rule ──► file_conversion_rules[].name
                                        │
                                        ├── enable_request_params：query 参数覆盖开关 + 范围限制
-                                       │     ├── width/height/quality：min>0 或 max>0 视为启用该参数
+                                       │     ├── width/height/quality：enabled 开关 + min/max 范围限制
                                        │     └── blur/format：bool 开关
                                        ├── default_params：未指定参数时的兜底值（blur 为高斯模糊 sigma，浮点）
                                        ├── supported_formats：输出格式白名单（空 = 不限制）

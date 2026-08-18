@@ -120,8 +120,9 @@ type RequestParamsConfig struct {
 
 // ParamRange 定义参数的允许范围。
 type ParamRange struct {
-	Min int `yaml:"min"` // 最小值
-	Max int `yaml:"max"` // 最大值
+	Enabled bool `yaml:"enabled"` // 是否允许通过请求参数覆盖
+	Min     int  `yaml:"min"`     // 最小值
+	Max     int  `yaml:"max"`     // 最大值
 }
 
 // ConversionDefaultParams 定义转换的默认参数值。

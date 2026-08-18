@@ -85,8 +85,6 @@ func (r *Router) Resolve(namespace, className string) (Route, error) {
 }
 
 // FileConversionRule 根据名称查找文件转换规则。
-// 返回规则和是否存在该规则的布尔值。
-func (r *Router) FileConversionRule(name string) (config.FileConversionRule, bool) {
-	rule, exists := r.conversionRules[config.NormalizeKey(name)]
-	return rule, exists
+func (r *Router) FileConversionRule(name string) config.FileConversionRule {
+	return r.conversionRules[config.NormalizeKey(name)]
 }

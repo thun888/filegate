@@ -172,11 +172,7 @@ func (s *Server) handleFetch(c *gin.Context) {
 
 	// 处理转换请求
 	if transformOptions.Enabled && s.imgproxy != nil {
-		rule, _ := s.router.FileConversionRule(route.Class.FileConversion.Rule)
-		// if !exists {
-		// 	abortWithError(c, http.StatusInternalServerError, fmt.Errorf("file conversion rule %q not found", route.Class.FileConversion.Rule))
-		// 	return
-		// }
+		rule := s.router.FileConversionRule(route.Class.FileConversion.Rule)
 
 		imgResp, processErr := s.processWithImgproxy(c.Request, namespace, className, sourcePath, transformOptions, rule)
 		if processErr != nil {
@@ -360,6 +356,13 @@ func abortWithError(c *gin.Context, statusCode int, err error) {
 			c.Abort()
 			return
 		}
+	}
+
+	// HEAD 响应一律不携带响应体（RFC 9110 §9.3.2），
+	// 即使没有对应的错误图片，也不能回退为 JSON 响应体。
+	if c.Request != nil && c.Request.Method == http.MethodHead {
+		c.AbortWithStatus(statusCode)
+		return
 	}
 
 	c.AbortWithStatusJSON(statusCode, gin.H{
