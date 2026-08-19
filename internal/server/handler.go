@@ -278,7 +278,7 @@ func (s *Server) handleOriginFetch(c *gin.Context) {
 	}
 
 	classCfg := route.Class
-	classCfg.FileConversion = nil
+	classCfg.FileConversion.Rules = nil
 	sourcePath, _, _, err := s.processor.ParseRequest(classCfg, rawObjectPath, c.Request.URL.Query())
 	if err != nil {
 		abortWithError(c, http.StatusBadRequest, err)

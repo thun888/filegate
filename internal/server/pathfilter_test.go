@@ -52,8 +52,8 @@ func TestHandleFetch_PathFilterAppliesToSourcePath(t *testing.T) {
 						},
 						// 转换请求显式选择规则（!r1）；imgproxy 未配置时转换后缀会被剥离，
 						// 请求直接落到后端——PathFilter 必须校验剥离后的路径。
-						FileConversion: []config.ClassFileConversionConfig{
-							{Rule: "r1"},
+						FileConversion: config.ClassFileConversionConfig{
+							Rules: []string{"r1"},
 						},
 					},
 				},

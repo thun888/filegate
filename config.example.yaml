@@ -79,22 +79,23 @@ namespaces:
               - webp
         # 文件处理
         file_conversion:
-          - rule: "png_conversion"
-            enable_request_params:
-              width:
-                enabled: true
-                min: 1
-                max: 8192
-              height:
-                enabled: true
-                min: 1
-                max: 8192
-              quality:
-                enabled: true
-                min: 10
-                max: 95
-              blur: true
-              format: true
+          rules:
+            - "png_conversion"
+          enable_request_params:
+            width:
+              enabled: true
+              min: 1
+              max: 8192
+            height:
+              enabled: true
+              min: 1
+              max: 8192
+            quality:
+              enabled: true
+              min: 10
+              max: 95
+            blur: true
+            format: true
         # 响应头设置
         response_headers:
           Cache-Control: "public,max-age=3600"

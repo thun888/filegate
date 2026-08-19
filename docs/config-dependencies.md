@@ -14,8 +14,9 @@ namespaces[].class[]
    │     ├── refer_check.enabled      ──依赖──► refer_check.allowed_referers（非空才有效）
    │     ├── signature.enabled        ──依赖──► signature.secret（必填）
    │     └── path_filter              （自包含，空配置 = 全部放行）
-   ├── file_conversion[].rule      ──引用──►  file_conversion_rules[].name
+   ├── file_conversion.rules[]    ──引用──►  file_conversion_rules[].name
    │     ├── 规则选择：路径后缀 !rulename 或 query rule=；均未指定 → 不做转换
+   │     ├── enable_request_params：对 file_conversion 内所有规则生效
    │     ├── 运行期 ──依赖──►  service.imgproxy.url（未配置则转换静默失效）
    │     └── service.imgproxy         ──依赖──►  system.server.base_url（生成 /origin/ 回源地址）
    └── response_headers               （独立，无依赖）
@@ -32,7 +33,7 @@ system.server.base_url    →  仅 imgproxy 链路使用；缺省时由 host:por
 |---|---|---|
 | `namespaces[].backend_policy` | `backend_policy[].name` | 必填；引用不存在的策略 → 启动报错 |
 | `backend_policy[].backends[]` | `backends[].name` | 至少一个后端可解析，否则报错；运行期若某个名字不存在，`OrderedBackends` 返回错误（502） |
-| `class[].file_conversion[].rule` | `file_conversion_rules[].name` | 每个条目必填且必须存在；同一 class 内不得重复引用，否则报错 |
+| `class[].file_conversion.rules[]` | `file_conversion_rules[].name` | 每个条目必填且必须存在；同一 class 内不得重复引用，否则报错 |
 | （无引用）`class[].security.*` | — | 三类安全策略彼此独立，可与上述任意组合 |
 
 唯一性约束：`backends[].name`、`backend_policy[].name`、`file_conversion_rules[].name`、
@@ -77,9 +78,10 @@ system.server.base_url    →  仅 imgproxy 链路使用；缺省时由 host:por
 ## 5. file_conversion 链路：三层引用 + 运行期交叉依赖
 
 ```
-class.file_conversion[]                          （类别级：可用规则白名单 + 参数开关）
-    ├── rule        ──引用──►  file_conversion_rules[].name
+class.file_conversion                             （类别级：可用规则白名单 + 参数开关）
+    ├── rules[]    ──引用──►  file_conversion_rules[].name
     └── enable_request_params：query/后缀参数覆盖开关 + 范围限制
+          （对整个 file_conversion 生效，rules 内所有规则共享）
           ├── width/height/quality：enabled 开关 + min/max 范围限制
           └── blur/format：bool 开关
 
@@ -132,7 +134,7 @@ file_conversion_rules[]                          （规则级：转换预设）
 | 没有任何 `backends` | `at least one backend is required` |
 | `namespace.backend_policy` 指向不存在的策略 | `references unknown backend policy` |
 | `backend_policy.backends` 全部不可解析 | `has no resolvable backend` |
-| file_conversion 条目 `rule` 为空/引用不存在 | `file_conversion entry with empty rule` / `references unknown conversion rule` |
+| `file_conversion.rules` 条目为空/引用不存在 | `file_conversion entry with empty rule` / `references unknown conversion rule` |
 | 启用签名但 `secret` 为空 | `enables signature but secret is empty` |
 | imgproxy 签名启用但 `url`/`key`/`salt` 缺失 | `imgproxy signature enabled but ...` |
 | `base_url` 不是合法 URL | `invalid system.server.base_url` |

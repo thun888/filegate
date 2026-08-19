@@ -58,7 +58,7 @@ func (p *Processor) ParseRequest(classCfg config.ClassConfig, objectPath string,
 		return "", TransformOptions{}, config.FileConversionRule{}, err
 	}
 
-	if len(classCfg.FileConversion) == 0 {
+	if len(classCfg.FileConversion.Rules) == 0 {
 		return normalizedPath, TransformOptions{}, config.FileConversionRule{}, nil
 	}
 
@@ -84,12 +84,12 @@ func (p *Processor) ParseRequest(classCfg config.ClassConfig, objectPath string,
 		return normalizedPath, TransformOptions{}, config.FileConversionRule{}, nil
 	}
 
-	entry, ok := findConversionEntry(classCfg.FileConversion, ruleName)
-	if !ok {
+	if !hasConversionRule(classCfg.FileConversion.Rules, ruleName) {
 		return "", TransformOptions{}, config.FileConversionRule{}, fmt.Errorf("conversion rule %q is not enabled for this class", ruleName)
 	}
 
-	rule := p.lookupRule(entry.Rule)
+	rule := p.lookupRule(ruleName)
+	params := classCfg.FileConversion.EnableRequestParams
 	opts := TransformOptions{
 		Enabled: true,
 		Width:   rule.DefaultParams.Width,
@@ -99,17 +99,16 @@ func (p *Processor) ParseRequest(classCfg config.ClassConfig, objectPath string,
 		Format:  strings.ToLower(strings.TrimPrefix(rule.DefaultParams.Format, ".")),
 	}
 
-	if pt.hasFormat && entry.EnableRequestParams.Format {
+	if pt.hasFormat && params.Format {
 		opts.Format = strings.ToLower(pt.format)
 	}
 	for _, pm := range pt.params {
-		if err := applyTransformParam(entry.EnableRequestParams, &opts, pm.field, pm.value); err != nil {
+		if err := applyTransformParam(params, &opts, pm.field, pm.value); err != nil {
 			return "", TransformOptions{}, config.FileConversionRule{}, err
 		}
 	}
 
 	// 查询参数覆盖路径后缀值；未启用的参数一律静默忽略。
-	params := entry.EnableRequestParams
 	if v := strings.TrimSpace(query.Get("width")); v != "" && params.Width.Enabled {
 		if opts.Width, err = parsePositiveInt("width", v); err != nil {
 			return "", TransformOptions{}, config.FileConversionRule{}, err
@@ -156,15 +155,15 @@ func (p *Processor) ParseRequest(classCfg config.ClassConfig, objectPath string,
 	return pt.sourcePath, opts, rule, nil
 }
 
-// findConversionEntry 在类别的转换配置中按名称（大小写不敏感）查找条目。
-func findConversionEntry(entries []config.ClassFileConversionConfig, name string) (config.ClassFileConversionConfig, bool) {
+// hasConversionRule 判断规则名（大小写不敏感）是否在类别的可用规则列表中。
+func hasConversionRule(rules []string, name string) bool {
 	key := config.NormalizeKey(name)
-	for _, e := range entries {
-		if config.NormalizeKey(e.Rule) == key {
-			return e, true
+	for _, r := range rules {
+		if config.NormalizeKey(r) == key {
+			return true
 		}
 	}
-	return config.ClassFileConversionConfig{}, false
+	return false
 }
 
 // parsePathTransform 解析路径中的转换后缀（@... 形式）。

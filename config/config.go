@@ -60,10 +60,10 @@ type NamespaceConfig struct {
 
 // ClassConfig 定义命名空间下的类别配置。
 type ClassConfig struct {
-	Name            string                      `yaml:"name"`             // 类别名称，用于URL路径路由
-	Security        SecurityConfig              `yaml:"security"`         // 安全相关配置
-	FileConversion  []ClassFileConversionConfig `yaml:"file_conversion"`  // 文件转换配置（可用规则列表）
-	ResponseHeaders map[string]string           `yaml:"response_headers"` // 自定义响应头
+	Name            string                    `yaml:"name"`             // 类别名称，用于URL路径路由
+	Security        SecurityConfig            `yaml:"security"`         // 安全相关配置
+	FileConversion  ClassFileConversionConfig `yaml:"file_conversion"`  // 文件转换配置
+	ResponseHeaders map[string]string         `yaml:"response_headers"` // 自定义响应头
 }
 
 // SecurityConfig 包含安全相关的配置项。
@@ -94,10 +94,9 @@ type PathFilterConfig struct {
 }
 
 // ClassFileConversionConfig 定义类别级别的文件转换配置。
-// 每个条目关联一个转换规则，并定义该类别下允许客户端覆盖的参数开关。
 type ClassFileConversionConfig struct {
-	Rule                string              `yaml:"rule"`                  // 使用的转换规则名称
-	EnableRequestParams RequestParamsConfig `yaml:"enable_request_params"` // 允许通过请求参数覆盖的转换选项
+	Rules               []string            `yaml:"rules"`                 // 可用的转换规则名称列表
+	EnableRequestParams RequestParamsConfig `yaml:"enable_request_params"` // 允许通过请求参数覆盖的转换选项（对 rules 内所有规则生效）
 }
 
 // FileConversionRule 定义文件转换规则的完整配置。

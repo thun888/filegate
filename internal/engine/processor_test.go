@@ -43,8 +43,9 @@ func processorWithRule(rule config.FileConversionRule) *Processor {
 // testClassConfig 构造引用 png_conversion 规则的类别配置。
 func testClassConfig(params config.RequestParamsConfig) config.ClassConfig {
 	return config.ClassConfig{
-		FileConversion: []config.ClassFileConversionConfig{
-			{Rule: "png_conversion", EnableRequestParams: params},
+		FileConversion: config.ClassFileConversionConfig{
+			Rules:               []string{"png_conversion"},
+			EnableRequestParams: params,
 		},
 	}
 }
@@ -492,7 +493,7 @@ func TestParseRequest_RuleSelector(t *testing.T) {
 }
 
 // TestParseRequest_MultipleRulesPerClass 验证一个类别可挂多个规则，
-// 每个条目的 enable_request_params 独立生效。
+// enable_request_params 对整个 file_conversion 生效（所有规则共享开关）。
 func TestParseRequest_MultipleRulesPerClass(t *testing.T) {
 	processor := NewProcessor((&Router{conversionRules: map[string]config.FileConversionRule{
 		"thumb": {Name: "thumb", DefaultParams: config.ConversionDefaultParams{Width: 100}},
@@ -500,13 +501,13 @@ func TestParseRequest_MultipleRulesPerClass(t *testing.T) {
 	}}).FileConversionRule)
 
 	classCfg := config.ClassConfig{
-		FileConversion: []config.ClassFileConversionConfig{
-			{Rule: "thumb", EnableRequestParams: fullRequestParams()},
-			{Rule: "full"},
+		FileConversion: config.ClassFileConversionConfig{
+			Rules:               []string{"thumb", "full"},
+			EnableRequestParams: fullRequestParams(),
 		},
 	}
 
-	// thumb 启用了 width 覆盖
+	// thumb：width 覆盖生效，默认 100
 	query := url.Values{"rule": {"thumb"}, "width": {"150"}}
 	_, opts, rule, err := processor.ParseRequest(classCfg, "images/demo.jpg", query)
 	if err != nil {
@@ -516,14 +517,24 @@ func TestParseRequest_MultipleRulesPerClass(t *testing.T) {
 		t.Fatalf("opts=%+v rule=%q, want width=150 rule=thumb", opts, rule.Name)
 	}
 
-	// full 未启用 width 覆盖：查询参数被静默忽略，保持规则默认值
+	// full：共享同一 enable_request_params，width 覆盖同样生效
 	query = url.Values{"rule": {"full"}, "width": {"150"}}
 	_, opts, rule, err = processor.ParseRequest(classCfg, "images/demo.jpg", query)
 	if err != nil {
 		t.Fatalf("ParseRequest() error = %v", err)
 	}
-	if opts.Width != 2000 || rule.Name != "full" {
-		t.Fatalf("opts=%+v rule=%q, want width=2000 rule=full", opts, rule.Name)
+	if opts.Width != 150 || rule.Name != "full" {
+		t.Fatalf("opts=%+v rule=%q, want width=150 rule=full", opts, rule.Name)
+	}
+
+	// 未指定 width 时使用各自规则的默认值
+	query = url.Values{"rule": {"thumb"}}
+	if _, opts, _, err = processor.ParseRequest(classCfg, "images/demo.jpg", query); err != nil || opts.Width != 100 {
+		t.Fatalf("expected thumb default width 100, got %d (err %v)", opts.Width, err)
+	}
+	query = url.Values{"rule": {"full"}}
+	if _, opts, _, err = processor.ParseRequest(classCfg, "images/demo.jpg", query); err != nil || opts.Width != 2000 {
+		t.Fatalf("expected full default width 2000, got %d (err %v)", opts.Width, err)
 	}
 }
 

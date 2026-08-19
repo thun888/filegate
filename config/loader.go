@@ -227,19 +227,19 @@ func validate(cfg *Config) error {
 			}
 			classNames[clsKey] = struct{}{}
 
-			seenRules := make(map[string]struct{}, len(cls.FileConversion))
-			for _, fc := range cls.FileConversion {
-				if strings.TrimSpace(fc.Rule) == "" {
+			seenRules := make(map[string]struct{}, len(cls.FileConversion.Rules))
+			for _, rule := range cls.FileConversion.Rules {
+				if strings.TrimSpace(rule) == "" {
 					return fmt.Errorf("class %q in namespace %q has file_conversion entry with empty rule", cls.Name, ns.Name)
 				}
-				fcKey := NormalizeKey(fc.Rule)
-				if _, exists := ruleNames[fcKey]; !exists {
-					return fmt.Errorf("class %q in namespace %q references unknown conversion rule %q", cls.Name, ns.Name, fc.Rule)
+				ruleKey := NormalizeKey(rule)
+				if _, exists := ruleNames[ruleKey]; !exists {
+					return fmt.Errorf("class %q in namespace %q references unknown conversion rule %q", cls.Name, ns.Name, rule)
 				}
-				if _, dup := seenRules[fcKey]; dup {
-					return fmt.Errorf("class %q in namespace %q references conversion rule %q more than once", cls.Name, ns.Name, fc.Rule)
+				if _, dup := seenRules[ruleKey]; dup {
+					return fmt.Errorf("class %q in namespace %q references conversion rule %q more than once", cls.Name, ns.Name, rule)
 				}
-				seenRules[fcKey] = struct{}{}
+				seenRules[ruleKey] = struct{}{}
 			}
 
 			if cls.Security.Signature.Enabled && strings.TrimSpace(cls.Security.Signature.Secret) == "" {
