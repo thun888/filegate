@@ -47,12 +47,13 @@ namespaces:
     class:
       - name: "class1"
         security:
-          # 来源头检查
+          # 来源头检查（提取 Referer 的域名后按域名匹配，忽略协议/端口/路径）
           refer_check:
             enabled: true
             allowed_referers:
-              - "http://example.com"
-              - "http://another.com"
+              - "example.com"      # 精确域名
+              - "*.another.com"    # 泛域名：匹配所有子域名（不含 another.com 本身）
+              # - "*"              # 单独的 * 放行所有域名
           signature:
             enabled: true
             secret: "xxxx"

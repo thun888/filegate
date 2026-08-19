@@ -67,7 +67,7 @@ system.server.base_url    →  仅 imgproxy 链路使用；缺省时由 host:por
 
 | 子块 | 生效条件 | 依赖字段 | 说明 |
 |---|---|---|---|
-| `refer_check` | `enabled: true` | `allowed_referers` 非空才有实际放行能力 | 前缀匹配；未配置允许列表则所有请求 403 |
+| `refer_check` | `enabled: true` | `allowed_referers` 非空才有实际放行能力 | 提取 Referer 域名后按域名匹配（支持 `*.example.com` 泛域名与单独 `*` 全放行）；未配置允许列表则所有请求 403 |
 | `signature` | `enabled: true` | `secret` 必填（启动校验） | `expire` 用于限制 exp 的最大超前窗口（0 = 不限制） |
 | `path_filter` | 始终生效（结构上始终存在） | 三者均为空 = 全部放行 | 校验顺序：`deny_patterns`（正则，命中即 403）→ `allow_paths`（非空时前缀必须命中）→ `allow_extensions`（非空时扩展名必须命中） |
 

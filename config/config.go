@@ -76,7 +76,7 @@ type SecurityConfig struct {
 // ReferCheckConfig 定义 Referer 检查配置。
 type ReferCheckConfig struct {
 	Enabled         bool     `yaml:"enabled"`          // 是否启用Referer检查
-	AllowedReferers []string `yaml:"allowed_referers"` // 允许的Referer前缀列表，使用前缀匹配
+	AllowedReferers []string `yaml:"allowed_referers"` // 允许的Referer域名列表：精确域名（example.com）或通配符域名（*.example.com），单独的 * 放行所有域名
 }
 
 // SignatureConfig 定义请求签名验证配置。

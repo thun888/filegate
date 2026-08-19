@@ -23,6 +23,14 @@ var (
 )
 
 // VerifyReferer 基于 Referer 白名单进行校验。
+//
+// 校验逻辑：从 Referer 中提取域名（忽略协议、端口与路径），与白名单条目按域名匹配。
+// 白名单条目支持：
+//   - 精确域名：example.com
+//   - 泛域名：*.example.com（匹配任意子域名，不含 example.com 本身）
+//   - 单独的 *：放行所有域名
+//
+// 匹配不区分大小写，域名末尾的 "." 会被忽略。
 func VerifyReferer(r *http.Request, cfg config.ReferCheckConfig) error {
 	if !cfg.Enabled {
 		return nil
@@ -33,17 +41,44 @@ func VerifyReferer(r *http.Request, cfg config.ReferCheckConfig) error {
 		return ErrRefererDenied
 	}
 
+	u, err := url.Parse(referer)
+	if err != nil {
+		return ErrRefererDenied
+	}
+	host := normalizeDomain(u.Hostname())
+	if host == "" {
+		return ErrRefererDenied
+	}
+
 	for _, allowed := range cfg.AllowedReferers {
-		allowed = strings.TrimSpace(allowed)
-		if allowed == "" {
-			continue
-		}
-		if strings.HasPrefix(referer, allowed) {
+		if domainMatches(host, allowed) {
 			return nil
 		}
 	}
 
 	return ErrRefererDenied
+}
+
+// normalizeDomain 将域名统一为小写并去掉末尾的 "."，便于比较。
+func normalizeDomain(d string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(d)), ".")
+}
+
+// domainMatches 判断 host 是否命中白名单条目 pattern。
+// pattern 支持精确域名、泛域名（*.example.com）以及单独的 *（匹配所有域名）。
+func domainMatches(host, pattern string) bool {
+	pattern = normalizeDomain(pattern)
+	if pattern == "" {
+		return false
+	}
+	if pattern == "*" {
+		return true
+	}
+	if strings.HasPrefix(pattern, "*.") {
+		suffix := pattern[2:]
+		return suffix != "" && strings.HasSuffix(host, "."+suffix)
+	}
+	return host == pattern
 }
 
 // VerifySignature 校验 exp/sign 查询参数。
