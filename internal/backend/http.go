@@ -57,7 +57,7 @@ func (b *httpBackend) Name() string {
 func (b *httpBackend) Fetch(ctx context.Context, objectPath string) (*Object, error) {
 	// 检查 objectPath 是否为空或仅包含空白字符
 	if strings.TrimSpace(objectPath) == "" {
-		return nil, fmt.Errorf("object path is empty")
+		return nil, NotRetryable(fmt.Errorf("object path is empty"))
 	}
 	// 构建请求
 	requestURL := b.buildRequestURL(objectPath)
@@ -78,7 +78,7 @@ func (b *httpBackend) Fetch(ctx context.Context, objectPath string) (*Object, er
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		defer resp.Body.Close()
-		return nil, fmt.Errorf("backend %q returned status %d", b.name, resp.StatusCode)
+		return nil, fmt.Errorf("backend %q: %w", b.name, &StatusError{Code: resp.StatusCode})
 	}
 	// 调用时记得关闭 Object.Body
 	return &Object{

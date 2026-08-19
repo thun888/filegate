@@ -26,16 +26,25 @@ type Backend interface {
 	Fetch(ctx context.Context, objectPath string) (*Object, error)
 }
 
-// NewFromConfig 根据配置创建后端实例。
+// NewFromConfig 根据配置创建后端实例，并按 retries/retry_delay 包装重试装饰器。
 func NewFromConfig(cfg config.BackendConfig) (Backend, error) {
+	var (
+		b   Backend
+		err error
+	)
 	switch strings.ToLower(strings.TrimSpace(cfg.Type)) {
 	case "http":
-		return newHTTPBackend(cfg)
+		b, err = newHTTPBackend(cfg)
 	case "s3":
-		return newS3Backend(cfg)
+		b, err = newS3Backend(cfg)
 	case "fs":
-		return newFSBackend(cfg)
+		b, err = newFSBackend(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported backend type %q for backend %q", cfg.Type, cfg.Name)
 	}
+	if err != nil {
+		return nil, err
+	}
+
+	return newRetryBackend(b, cfg.Retries, cfg.RetryDelay), nil
 }

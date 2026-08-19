@@ -20,8 +20,8 @@ backends:
 
     # 公共配置
     timeout: 5s
-    retries: 3
-    retry_delay: 1s
+    retries: 3        # 请求失败重试次数（408/429/5xx 与网络错误重试；404 等 4xx 与确定性错误不重试）
+    retry_delay: 1s   # 重试间隔
     circuit_breaker:
       failure_threshold: 5
       recovery_timeout: 30s

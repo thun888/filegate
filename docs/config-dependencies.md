@@ -2,7 +2,7 @@
 
 本文梳理 `config.yaml` 中各配置块之间的**引用关系**、**条件依赖**与**运行期交叉依赖**。
 行为依据为 `config/loader.go`（加载/校验）、`internal/engine/router.go`、`internal/server/handler.go`、
-`internal/server/imgproxy.go`、`internal/engine/policy.go` 的实现。
+`internal/server/imgproxy.go`、`internal/engine/policy.go`、`internal/backend/retry.go` 的实现。
 
 ## 0. 依赖总览（箭头 = "引用/依赖"）
 
@@ -51,7 +51,7 @@ system.server.base_url    →  仅 imgproxy 链路使用；缺省时由 host:por
 公共字段：
 - `timeout`：≤0 时加载阶段重置为 5s；
 - `circuit_breaker.*`：`failure_threshold > 0` 才会为该后端注册熔断器，否则请求直接放行；
-- `retries` / `retry_delay`：**仅做了归一化，运行期未使用**（见 §7）。
+- `retries` / `retry_delay`：请求失败后的重试次数与重试间隔，语义见 §9。
 
 ## 3. backend_policy：策略字段间的依赖
 
@@ -120,7 +120,6 @@ file_conversion_rules[]                          （规则级：转换预设）
 
 | 字段 | 现状 |
 |---|---|
-| `backends[].retries` / `retry_delay` | 仅加载时归一化，后端 `Fetch` 无重试逻辑 |
 | `system.logging.level` | 归一化后未使用 |
 | `system.metrics.labels` | 未注入 Prometheus 指标 |
 
@@ -128,6 +127,7 @@ file_conversion_rules[]                          （规则级：转换预设）
 没有对应的 zip 处理选项，保留会造成"配置了没效果"的误导；`watermark` 现已实现（见 §5）。
 `supported_formats` 也已移除——输出格式不再做白名单校验，仅受
 `enable_request_params.format` 开关控制。
+`backends[].retries` / `retry_delay` 现已实现（见 §9），不再属于本节。
 
 ## 8. 常见配置错误对照（均会在启动时被拒绝）
 
@@ -142,3 +142,22 @@ file_conversion_rules[]                          （规则级：转换预设）
 | `base_url` 不是合法 URL | `invalid system.server.base_url` |
 | s3 只填了 `access_key` 或 `secret_key` 之一 | `requires both access_key and secret_key` |
 | 后端类型与必填 config 不符（如 http 缺 `url_prefix`） | 在 `server.New` 构建后端时报错 |
+
+## 9. 后端重试语义（backends[].retries / retry_delay）
+
+实现位于 `internal/backend/retry.go`：`NewFromConfig` 按 `retries`/`retry_delay` 用重试装饰器
+（`retryBackend`）包装每个后端，引擎与 handler 无需感知重试。
+
+- **次数与间隔**：`retries` 为失败后的重试次数（总尝试次数 = retries + 1），`retry_delay` 为
+  两次尝试之间的固定间隔（无指数退避/抖动）。`retries <= 0` 时不包装、不重试；
+  `retry_delay < 0` 归一化为 0（立即重试）。间隔等待响应 ctx 取消，取消时提前返回错误。
+- **错误分类**（`isRetryable`）：
+  - 携带 HTTP 状态码的错误（http 后端 4xx/5xx、s3 通过 `HTTPStatusCode()` 映射）：
+    `408`/`429`/`5xx` 重试，其余 `4xx`（404、403、400 等确定性错误）不重试；
+  - 显式标记 `NotRetryable` 的错误（fs 后端的路径非法、文件不存在等）不重试；
+  - 其余错误（网络错误、读超时等）默认重试；调用方 ctx 取消/超时后不再发起新重试。
+- **fs 后端**：路径校验类与"文件不存在"错误标记为不可重试；打开文件等 IO 错误默认重试。
+- **s3 后端**：构建客户端时设置 `Retryer: aws.NopRetryer{}` 禁用 AWS SDK 内置标准重试器
+  （默认最多 3 次尝试），避免两层重试叠加——`retries`/`retry_delay` 是唯一的重试来源。
+- 与熔断/故障转移的关系：重试发生在**单个后端内部**，重试全部失败后该后端才算一次失败
+  （计入熔断计数，并继续 failover 策略中的下一个后端）。

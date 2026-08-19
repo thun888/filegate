@@ -45,7 +45,7 @@ func (b *fsBackend) Fetch(_ context.Context, objectPath string) (*Object, error)
 	f, err := os.Open(resolvedPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("file %q not found in backend %q", objectPath, b.name)
+			return nil, NotRetryable(fmt.Errorf("file %q not found in backend %q", objectPath, b.name))
 		}
 		return nil, fmt.Errorf("open %q from backend %q: %w", objectPath, b.name, err)
 	}
@@ -76,11 +76,11 @@ func (b *fsBackend) resolvePath(objectPath string) (string, error) {
 	// 防止路径过长影响处理效率，或者说被利用来耗费资源
 	const MaxPathLength = 4096
 	if len(objectPath) > MaxPathLength {
-		return "", fmt.Errorf("path too long")
+		return "", NotRetryable(fmt.Errorf("path too long"))
 	}
 
 	if strings.TrimSpace(objectPath) == "" {
-		return "", fmt.Errorf("object path is empty")
+		return "", NotRetryable(fmt.Errorf("object path is empty"))
 	}
 	// 清理路径，防止路径穿越攻击
 	cleanPath := filepath.Clean(filepath.FromSlash("/" + strings.TrimLeft(objectPath, "/")))
@@ -88,7 +88,7 @@ func (b *fsBackend) resolvePath(objectPath string) (string, error) {
 	fullPath := filepath.Join(b.rootPath, relPath)
 	// 确保 fullPath 在 b.rootPath 内
 	if !isSubPath(b.rootPath, fullPath) {
-		return "", fmt.Errorf("path %q escapes backend root", objectPath)
+		return "", NotRetryable(fmt.Errorf("path %q escapes backend root", objectPath))
 	}
 
 	return fullPath, nil

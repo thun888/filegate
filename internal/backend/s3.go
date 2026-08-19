@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -45,6 +46,9 @@ func newS3Backend(cfg config.BackendConfig) (Backend, error) {
 	awsCfg := aws.Config{
 		Region:     region,
 		HTTPClient: &http.Client{Timeout: timeout},
+		// 禁用 SDK 内置重试器，让 backends[].retries/retry_delay 成为唯一的重试来源，
+		// 避免两层重试叠加导致行为不可预期
+		Retryer: func() aws.Retryer { return aws.NopRetryer{} },
 	}
 
 	accessKey := strings.TrimSpace(cfg.Config.AccessKey)
@@ -83,12 +87,12 @@ func (b *s3Backend) Name() string {
 func (b *s3Backend) Fetch(ctx context.Context, objectPath string) (*Object, error) {
 	// 对象路径检查
 	if strings.TrimSpace(objectPath) == "" {
-		return nil, fmt.Errorf("object path is empty")
+		return nil, NotRetryable(fmt.Errorf("object path is empty"))
 	}
 
 	key := strings.TrimLeft(objectPath, "/")
 	if key == "" {
-		return nil, fmt.Errorf("object path is empty")
+		return nil, NotRetryable(fmt.Errorf("object path is empty"))
 	}
 	// 发起 GetObject 请求
 	resp, err := b.client.GetObject(ctx, &s3.GetObjectInput{
@@ -96,7 +100,7 @@ func (b *s3Backend) Fetch(ctx context.Context, objectPath string) (*Object, erro
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("request backend %q: %w", b.name, err)
+		return nil, fmt.Errorf("request backend %q: %w", b.name, toBackendError(err))
 	}
 
 	headers := make(http.Header)
@@ -131,4 +135,18 @@ func (b *s3Backend) Fetch(ctx context.Context, objectPath string) (*Object, erro
 		Size:        size,
 		Headers:     headers,
 	}, nil
+}
+
+// toBackendError 将 AWS SDK 错误映射为携带 HTTP 状态码的 StatusError，
+// 便于重试装饰器区分 404（NoSuchKey 等确定性错误）与 5xx/网络错误；
+// 拿不到状态码时原样返回。
+func toBackendError(err error) error {
+	var statusCoder interface {
+		error
+		HTTPStatusCode() int
+	}
+	if errors.As(err, &statusCoder) {
+		return &StatusError{Code: statusCoder.HTTPStatusCode()}
+	}
+	return err
 }
