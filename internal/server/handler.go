@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,6 +28,46 @@ import (
 //go:embed res_code/*
 var resCodeImages embed.FS
 var Version = "dev"
+
+// debugLog 由环境变量 FILEGATE_DEBUG=1 控制。
+// 开启后：启动时输出内存中的全部路由/后端配置；每个请求进入处理链时输出排障日志。
+var debugLog = os.Getenv("FILEGATE_DEBUG") != ""
+
+// requestIDKey 是 Gin 上下文中存放请求 ID 的键。
+const requestIDKey = "filegate_request_id"
+
+// requestID 为每个请求生成或透传请求 ID（优先采用客户端传入的 X-Request-Id 头），
+// 并把 ID 写回响应头，用于把同一次请求产生的多条日志关联起来。
+func requestID() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := strings.TrimSpace(c.GetHeader("X-Request-Id"))
+		if id == "" {
+			id = fmt.Sprintf("%016x", rand.Uint64())
+		}
+		c.Set(requestIDKey, id)
+		c.Header("X-Request-Id", id)
+		c.Next()
+	}
+}
+
+// logRequestf 输出带请求上下文（请求 ID、方法、路径、客户端 IP）的日志行。
+// 所有请求期日志统一走这里，保证格式一致、可按请求 ID 关联同一请求的多条日志。
+func logRequestf(c *gin.Context, format string, args ...any) {
+	if c == nil || c.Request == nil {
+		log.Printf("%s", fmt.Sprintf(format, args...))
+		return
+	}
+	rid, _ := c.Get(requestIDKey)
+	log.Printf("[%v] %s %s client=%s | %s",
+		rid, c.Request.Method, c.Request.URL.Path, c.ClientIP(), fmt.Sprintf(format, args...))
+}
+
+// debugf 仅在 FILEGATE_DEBUG=1 时输出请求期日志。
+func debugf(c *gin.Context, format string, args ...any) {
+	if debugLog {
+		logRequestf(c, format, args...)
+	}
+}
 
 // Server 封装了 FileGate 的 HTTP 服务。
 type Server struct {
@@ -79,6 +121,7 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// 手动创建 Gin 引擎以控制Logger的使用
 	httpEngine := gin.New()
+	httpEngine.Use(requestID())
 	if cfg.System.Logging.AccessLog {
 		httpEngine.Use(gin.Logger())
 	}
@@ -96,6 +139,24 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	errorImages = preloadErrorImages()
+
+	// 启动时输出内存中实际生效的路由与后端配置，用于对照磁盘上的 config.yaml
+	// （无热加载：这里打出来的就是本次进程生命周期内真正生效的值）。
+	if debugLog {
+		for nsName, classes := range routeIndex.Routes() {
+			for clsName, rt := range classes {
+				log.Printf("[startup] route %s/%s policy=%q refer_check=%v signature=%v deny=%v allow_paths=%v allow_extensions=%v",
+					nsName, clsName, rt.Policy.Name,
+					rt.Class.Security.ReferCheck.Enabled, rt.Class.Security.Signature.Enabled,
+					rt.PathFilter.DenyPatterns(), rt.PathFilter.AllowPaths(), rt.PathFilter.AllowExtensions())
+			}
+		}
+		for _, bc := range backendCfgMap {
+			log.Printf("[startup] backend %s type=%s url_prefix=%s endpoint=%s bucket=%s root_path=%s",
+				bc.Name, bc.Type, bc.Config.URLPrefix, bc.Config.Endpoint, bc.Config.Bucket, bc.Config.RootPath)
+		}
+		log.Printf("[startup] imgproxy url=%q base_url=%q", cfg.Service.Imgproxy.URL, cfg.System.Server.BaseURL)
+	}
 
 	httpEngine.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "pong", "version": Version})
@@ -138,6 +199,9 @@ func (s *Server) handleFetch(c *gin.Context) {
 		return
 	}
 
+	debugf(c, "request ns=%q class=%q obj=%q referer=%q",
+		namespace, className, rawObjectPath, c.Request.Referer())
+
 	route, err := s.router.Resolve(namespace, className)
 	if err != nil {
 		abortWithError(c, http.StatusNotFound, err)
@@ -145,7 +209,9 @@ func (s *Server) handleFetch(c *gin.Context) {
 	}
 
 	if err = middleware.VerifyReferer(c.Request, route.Class.Security.ReferCheck); err != nil {
-		abortWithError(c, http.StatusForbidden, err)
+		debugf(c, "referer check: %v | referer=%q allowed=%v",
+			err, c.Request.Referer(), route.Class.Security.ReferCheck.AllowedReferers)
+		abortWithError(c, http.StatusForbidden, fmt.Errorf("referer check: %w", err))
 		return
 	}
 
@@ -154,7 +220,7 @@ func (s *Server) handleFetch(c *gin.Context) {
 		// if errors.Is(err, middleware.ErrSignatureExpired) {
 		// 	statusCode = http.StatusForbidden
 		// }
-		abortWithError(c, http.StatusUnauthorized, err)
+		abortWithError(c, http.StatusUnauthorized, fmt.Errorf("signature check: %w", err))
 		return
 	}
 	sourcePath, transformOptions, rule, err := s.processor.ParseRequest(route.Class, rawObjectPath, c.Request.URL.Query())
@@ -166,7 +232,9 @@ func (s *Server) handleFetch(c *gin.Context) {
 	// PathFilter 必须校验后端实际拉取的 sourcePath（此时转换后缀已被剥离），
 	// 否则 deny_patterns / allow_extensions 可被 @100w.jpg 这类转换后缀绕过。
 	if err = route.PathFilter.Validate(sourcePath); err != nil {
-		abortWithError(c, http.StatusForbidden, err)
+		debugf(c, "path filter: %v | deny=%v allow_paths=%v allow_extensions=%v",
+			err, route.PathFilter.DenyPatterns(), route.PathFilter.AllowPaths(), route.PathFilter.AllowExtensions())
+		abortWithError(c, http.StatusForbidden, fmt.Errorf("path filter: %w", err))
 		return
 	}
 
@@ -271,6 +339,9 @@ func (s *Server) handleOriginFetch(c *gin.Context) {
 		return
 	}
 
+	debugf(c, "origin ns=%q class=%q obj=%q referer=%q",
+		namespace, className, rawObjectPath, c.Request.Referer())
+
 	route, err := s.router.Resolve(namespace, className)
 	if err != nil {
 		abortWithError(c, http.StatusNotFound, err)
@@ -286,7 +357,9 @@ func (s *Server) handleOriginFetch(c *gin.Context) {
 	}
 
 	if err = route.PathFilter.Validate(sourcePath); err != nil {
-		abortWithError(c, http.StatusForbidden, err)
+		debugf(c, "path filter: %v | deny=%v allow_paths=%v allow_extensions=%v",
+			err, route.PathFilter.DenyPatterns(), route.PathFilter.AllowPaths(), route.PathFilter.AllowExtensions())
+		abortWithError(c, http.StatusForbidden, fmt.Errorf("path filter: %w", err))
 		return
 	}
 
@@ -338,6 +411,10 @@ func (s *Server) handleOriginFetch(c *gin.Context) {
 //
 // 该函数会终止后续处理链（调用 Abort 系列方法），调用后不应再继续执行其他逻辑。
 func abortWithError(c *gin.Context, statusCode int, err error) {
+	// 所有 >=400 的错误响应一律留痕：来源层已由调用方写入 err 前缀
+	// （referer check / signature check / path filter / namespace not found / all backends failed）。
+	logRequestf(c, "abort -> %d: %v", statusCode, err)
+
 	setNoCacheHeaders(c)
 
 	if imageName := errorImageName(statusCode); imageName != "" {

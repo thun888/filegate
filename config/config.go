@@ -88,7 +88,7 @@ type SignatureConfig struct {
 
 // PathFilterConfig 定义路径过滤规则。
 type PathFilterConfig struct {
-	DenyPatterns    []string `yaml:"deny_patterns"`    // 拒绝的路径模式列表，支持通配符
+	DenyPatterns    []string `yaml:"deny_patterns"`    // 拒绝的路径列表：按字面量子串匹配（非正则），路径包含任一子串即拒绝
 	AllowPaths      []string `yaml:"allow_paths"`      // 允许的路径前缀列表
 	AllowExtensions []string `yaml:"allow_extensions"` // 允许的文件扩展名列表
 }

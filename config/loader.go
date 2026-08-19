@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"os"
@@ -65,15 +66,15 @@ func normalize(cfg *Config) {
 
 		// 如果没有指定或范围错误，则使用重置为默认值
 		if cfg.Backends[i].Timeout <= 0 {
-			fmt.Printf("backend %q has non-positive timeout %d, using default 5s\n", cfg.Backends[i].Name, cfg.Backends[i].Timeout)
+			log.Printf("[config] backend %q has non-positive timeout %d, using default 5s", cfg.Backends[i].Name, cfg.Backends[i].Timeout)
 			cfg.Backends[i].Timeout = 5 * time.Second
 		}
 		if cfg.Backends[i].Retries < 0 {
-			fmt.Printf("backend %q has negative retries %d, using default 0\n", cfg.Backends[i].Name, cfg.Backends[i].Retries)
+			log.Printf("[config] backend %q has negative retries %d, using default 0", cfg.Backends[i].Name, cfg.Backends[i].Retries)
 			cfg.Backends[i].Retries = 0
 		}
 		if cfg.Backends[i].RetryDelay < 0 {
-			fmt.Printf("backend %q has negative retry delay %d, using default 0\n", cfg.Backends[i].Name, cfg.Backends[i].RetryDelay)
+			log.Printf("[config] backend %q has negative retry delay %d, using default 0", cfg.Backends[i].Name, cfg.Backends[i].RetryDelay)
 			cfg.Backends[i].RetryDelay = 0
 		}
 

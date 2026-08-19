@@ -46,7 +46,7 @@ func TestHandleFetch_PathFilterAppliesToSourcePath(t *testing.T) {
 						Name: "cls1",
 						Security: config.SecurityConfig{
 							PathFilter: config.PathFilterConfig{
-								DenyPatterns:    []string{`\.txt$`},
+								DenyPatterns:    []string{".txt"},
 								AllowExtensions: []string{"jpg"},
 							},
 						},

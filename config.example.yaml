@@ -66,6 +66,7 @@ namespaces:
             # exp: 过期时间，单位秒
             expire: 300
           path_filter:
+            # deny_patterns 按字面量子串匹配（非正则），路径包含任一子串即拒绝
             deny_patterns:
               - "../"
               - ".git"

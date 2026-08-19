@@ -88,3 +88,8 @@ func (r *Router) Resolve(namespace, className string) (Route, error) {
 func (r *Router) FileConversionRule(name string) config.FileConversionRule {
 	return r.conversionRules[config.NormalizeKey(name)]
 }
+
+// Routes 返回内部路由表（namespace -> class -> Route），仅供启动时的调试输出使用。
+func (r *Router) Routes() map[string]map[string]Route {
+	return r.routes
+}

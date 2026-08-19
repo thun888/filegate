@@ -23,7 +23,7 @@ func TestNewRouter_PrecompilesPathFilter(t *testing.T) {
 						Name: "img",
 						Security: config.SecurityConfig{
 							PathFilter: config.PathFilterConfig{
-								DenyPatterns: []string{"^private/"},
+								DenyPatterns: []string{"private/"},
 							},
 						},
 					},
@@ -31,7 +31,7 @@ func TestNewRouter_PrecompilesPathFilter(t *testing.T) {
 						Name: "doc",
 						Security: config.SecurityConfig{
 							PathFilter: config.PathFilterConfig{
-								DenyPatterns: []string{"\\.tmp$"},
+								DenyPatterns: []string{".tmp"},
 							},
 						},
 					},

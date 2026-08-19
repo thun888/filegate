@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log"
 	"net"
+	"os"
 	"strconv"
 
 	"github.com/thun888/filegate/config"
@@ -26,7 +27,7 @@ func main() {
 	}
 
 	addr := net.JoinHostPort(cfg.System.Server.Host, strconv.Itoa(cfg.System.Server.Port))
-	log.Printf("FileGate listening on http://%s", addr)
+	log.Printf("FileGate %s listening on http://%s (FILEGATE_DEBUG=%q)", server.Version, addr, os.Getenv("FILEGATE_DEBUG"))
 
 	// 启动
 	if err := srv.Run(addr); err != nil {
