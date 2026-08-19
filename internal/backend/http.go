@@ -30,6 +30,7 @@ func newHTTPBackend(cfg config.BackendConfig) (Backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse http url_prefix for backend %q: %w", cfg.Name, err)
 	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	// 超时设置检查
 	timeout := cfg.Timeout
 	if timeout <= 0 {
@@ -96,7 +97,6 @@ func (b *httpBackend) buildRequestURL(objectPath string) string {
 	}
 
 	u := *b.baseURL
-	basePath := strings.TrimRight(u.Path, "/")
-	u.Path = basePath + cleanPath
+	u.Path = u.Path + cleanPath
 	return u.String()
 }

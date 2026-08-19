@@ -65,7 +65,7 @@ func newImgproxyClient(cfg config.ImgproxyConfig) (*imgproxyClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse imgproxy url: %w", err)
 	}
-
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	return &imgproxyClient{
 		baseURL:    parsed,
 		signature:  cfg.Signature,
@@ -177,18 +177,24 @@ func (c *imgproxyClient) Do(ctx context.Context, req imgproxyRequest) (*http.Res
 	sourceEncoded := base64.RawURLEncoding.EncodeToString([]byte(req.SourceURL))
 	unsignedPath := "/" + strings.Join(processing, "/") + "/" + sourceEncoded
 
-	prefix := "unsafe"
+	// 在关闭鉴权时
+	// 生成签名时，若没有转换参数，则需要在路径前加上 "_" 前缀，避免 imgproxy 端签名验证失败。
+	// 而在有转换参数时，imgproxy 端会自动在签名验证时忽略 "_" 前缀，因此无需手动加上。
+	// 加上就会报错：Invalid URL
+
+	// 由于已排除无转换参数的情况，这里不再添加 "_" 前缀，若需要鉴权，则再添加相应URL前缀。
+	prefix := ""
 	if c.signature.Enabled {
 		sig, err := signImgproxyPath(unsignedPath, c.signature.Key, c.signature.Salt)
 		if err != nil {
 			return nil, err
 		}
-		prefix = sig
+		prefix = "/" + sig
 	}
 
 	u := *c.baseURL
-	u.Path = strings.TrimRight(c.baseURL.Path, "/") + "/" + prefix + unsignedPath
-
+	u.Path = c.baseURL.Path + prefix + unsignedPath
+	// log.Printf("imgproxy request URL: %s", u.String())
 	method := http.MethodGet
 	if req.Method == http.MethodHead {
 		method = http.MethodHead
