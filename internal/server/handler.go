@@ -90,6 +90,16 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("config is nil")
 	}
 
+	// gin 运行模式由 system.server.debug 控制：true 为 DebugMode，false 为 ReleaseMode。
+	// 必须在创建任何 gin.Engine 之前设置；测试代码显式设置的 TestMode 保持不变。
+	if gin.Mode() != gin.TestMode {
+		if cfg.System.Server.Debug {
+			gin.SetMode(gin.DebugMode)
+		} else {
+			gin.SetMode(gin.ReleaseMode)
+		}
+	}
+
 	routeIndex, err := engine.NewRouter(cfg)
 	if err != nil {
 		return nil, err

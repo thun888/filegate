@@ -173,6 +173,7 @@ type ServerConfig struct {
 	BaseURL string `yaml:"base_url"` // 服务器基础URL，用于生成完整URL
 	Host    string `yaml:"host"`     // 监听主机地址
 	Port    int    `yaml:"port"`     // 监听端口
+	Debug   bool   `yaml:"debug"`    // 调试模式：true 使用 gin.DebugMode（输出路由注册等调试信息），false 使用 gin.ReleaseMode
 }
 
 // LoggingConfig 定义日志配置。

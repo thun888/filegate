@@ -109,6 +109,8 @@ file_conversion_rules[]                          （规则级：转换预设）
 ## 6. 系统级字段依赖
 
 - `system.server.host` / `port`：进程监听地址（`main.go`），与路由无关；
+- `system.server.debug`：控制 Gin 运行模式——`true` 为 `gin.DebugMode`（输出路由注册等调试信息），
+  `false` 为 `gin.ReleaseMode`；在 `server.New` 创建引擎前设置；
 - `system.server.base_url`：**仅 imgproxy 链路使用**；未配置时自动用 `http://{host}:{port}` 填充；
   若部署在反代/容器后，必须显式配置为外部可达地址，否则 imgproxy 回源失败（502）；
 - `system.logging.access_log`：控制 Gin 访问日志；`system.logging.level` 已归一化但运行期未使用（§7）；
