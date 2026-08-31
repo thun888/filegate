@@ -184,6 +184,13 @@ func validate(cfg *Config) error {
 			}
 		}
 
+		// 启动时校验 extra_params，避免运行期每个请求都解析失败
+		if strings.TrimSpace(r.ExtraParams) != "" {
+			if _, err := ParseExtraParams(r.ExtraParams); err != nil {
+				return fmt.Errorf("file conversion rule %q has invalid extra_params: %w", r.Name, err)
+			}
+		}
+
 		// 水印参数校验：position 必须是 imgproxy 支持的取值，opacity 必须在 [0,1]
 		if r.Watermark.Enabled {
 			switch NormalizeKey(r.Watermark.Position) {

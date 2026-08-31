@@ -104,6 +104,7 @@ type FileConversionRule struct {
 	Name          string                  `yaml:"name"`           // 规则名称，用于在类别中引用
 	MaxFileSize   string                  `yaml:"max_file_size"`  // 最大文件大小限制，如"10MB"
 	DefaultParams ConversionDefaultParams `yaml:"default_params"` // 转换的默认参数值
+	ExtraParams   string                  `yaml:"extra_params"`   // 附加处理参数，按"/"拆分为选项段后原样追加到 imgproxy 处理 URL，如"strip_exif/w:600/q:50/f:avif"
 	Watermark     WatermarkConfig         `yaml:"watermark"`      // 水印配置
 }
 

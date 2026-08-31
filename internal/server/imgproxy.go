@@ -36,6 +36,7 @@ type imgproxyRequest struct {
 	Format            string
 	MaxSourceFileSize int64
 	Watermark         config.WatermarkConfig
+	ExtraParams       string
 }
 
 // imgproxyStatusError 携带 imgproxy 返回的 HTTP 状态码，供调用方区分处理（如 404 透传）。
@@ -48,7 +49,7 @@ func (e *imgproxyStatusError) Error() string {
 }
 
 // ErrImgproxyNoProcessingOptions 表示请求没有任何可下发的处理选项
-// （宽高、质量、模糊、格式、水印均为空或 0）。
+// （宽高、质量、模糊、格式、水印、附加参数均为空或 0）。
 var ErrImgproxyNoProcessingOptions = errors.New("no imgproxy processing options")
 
 func newImgproxyClient(cfg config.ImgproxyConfig) (*imgproxyClient, error) {
@@ -97,6 +98,7 @@ func (s *Server) processWithImgproxy(req *http.Request, namespace, className, so
 		Format:            opts.Format,
 		MaxSourceFileSize: maxSourceFileSize,
 		Watermark:         rule.Watermark,
+		ExtraParams:       rule.ExtraParams,
 	})
 }
 
@@ -168,7 +170,14 @@ func (c *imgproxyClient) Do(ctx context.Context, req imgproxyRequest) (*http.Res
 		}, ":"))
 	}
 
-	// 没有任何可下发的处理选项（宽高、质量、模糊、格式、水印全为空/0）时直接报错，
+	// 附加处理参数：按"/"拆分为选项段后原样追加到处理选项末尾
+	extra, err := config.ParseExtraParams(req.ExtraParams)
+	if err != nil {
+		return nil, fmt.Errorf("invalid extra_params: %w", err)
+	}
+	processing = append(processing, extra...)
+
+	// 没有任何可下发的处理选项（宽高、质量、模糊、格式、水印、附加参数均为空）时直接报错，
 	// 避免向 imgproxy 发出无意义的直通请求
 	if len(processing) == 0 {
 		return nil, ErrImgproxyNoProcessingOptions
