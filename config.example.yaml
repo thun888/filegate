@@ -111,7 +111,7 @@ file_conversion_rules:
       blur: 0.5
       quality: 80
       format: "avif"
-    # 附加处理参数：按"/"拆分为选项段，原样追加到 imgproxy 处理 URL（位于源地址之前）
+    # 附加处理参数：按"/"拆分为选项段，原样前置到 imgproxy 处理 URL 开头（先于其他处理参数生效，位于源地址之前）
     # 段内仅允许字母、数字与 _ : . - 字符，如 "strip_exif/w:600/q:50/f:avif"
     extra_params: ""
     watermark:

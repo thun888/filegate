@@ -170,12 +170,12 @@ func (c *imgproxyClient) Do(ctx context.Context, req imgproxyRequest) (*http.Res
 		}, ":"))
 	}
 
-	// 附加处理参数：按"/"拆分为选项段后原样追加到处理选项末尾
+	// 附加处理参数：按"/"拆分为选项段后原样前置到处理选项开头
 	extra, err := config.ParseExtraParams(req.ExtraParams)
 	if err != nil {
 		return nil, fmt.Errorf("invalid extra_params: %w", err)
 	}
-	processing = append(processing, extra...)
+	processing = append(extra, processing...)
 
 	// 没有任何可下发的处理选项（宽高、质量、模糊、格式、水印、附加参数均为空）时直接报错，
 	// 避免向 imgproxy 发出无意义的直通请求
