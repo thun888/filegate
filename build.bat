@@ -1,1 +1,1 @@
-go build -o filegate.exe ./cmd/filegate
+go build -o filegate.exe ./cmd/server/
