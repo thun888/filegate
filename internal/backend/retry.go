@@ -94,7 +94,9 @@ func isRetryable(err error) bool {
 	var statusErr *StatusError
 	if errors.As(err, &statusErr) {
 		code := statusErr.Code
-		return code == http.StatusRequestTimeout || code >= http.StatusInternalServerError
+		return code == http.StatusRequestTimeout ||
+			code == http.StatusTooManyRequests ||
+			code >= http.StatusInternalServerError
 	}
 
 	return true
