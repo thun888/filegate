@@ -353,6 +353,13 @@ namespaces:
           rules:
             - "png_conversion"
 
+          default_params:
+            width: 800
+            height: 600
+            blur: 0.5
+            quality: 80
+            format: "avif"
+
           enable_request_params:
             width: { enabled: true, min: 1, max: 8192 }
             height: { enabled: true, min: 1, max: 8192 }
@@ -394,7 +401,8 @@ file_conversion_rules:
 
 `max_file_size` 只用于 imgproxy 链路。
 
-`params` 是请求没有指定对应参数时使用的值。
+参数取值优先级：请求参数（query / 路径后缀）> 规则 `params` > 类别 `default_params`。
+规则 `params` 只覆盖类别 `default_params` 中已设置的对应字段（0 / 空视为未设置，沿用类别默认值）。
 
 `extra_params` 会按照 `/` 拆分成参数段，并原样放到 imgproxy 处理 URL 中。
 

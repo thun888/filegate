@@ -90,13 +90,14 @@ func (p *Processor) ParseRequest(classCfg config.ClassConfig, objectPath string,
 
 	rule := p.lookupRule(ruleName)
 	params := classCfg.FileConversion.EnableRequestParams
+	defaults := mergeConversionDefaults(classCfg.FileConversion.DefaultParams, rule.Params)
 	opts := TransformOptions{
 		Enabled: true,
-		Width:   rule.Params.Width,
-		Height:  rule.Params.Height,
-		Blur:    max(0.0, rule.Params.Blur),
-		Quality: rule.Params.Quality,
-		Format:  strings.ToLower(strings.TrimPrefix(rule.Params.Format, ".")),
+		Width:   defaults.Width,
+		Height:  defaults.Height,
+		Blur:    max(0.0, defaults.Blur),
+		Quality: defaults.Quality,
+		Format:  strings.ToLower(strings.TrimPrefix(defaults.Format, ".")),
 	}
 
 	if pt.hasFormat && params.Format {
@@ -164,6 +165,29 @@ func hasConversionRule(rules []string, name string) bool {
 		}
 	}
 	return false
+}
+
+// mergeConversionDefaults 以类别 default_params 为基础，
+// 用规则 params 中已设置的非零值覆盖对应字段，得到生效的基础参数。
+// 0（格式为空串）视为未设置，保留类别默认值。
+func mergeConversionDefaults(base, rule config.ConversionDefaultParams) config.ConversionDefaultParams {
+	out := base
+	if rule.Width != 0 {
+		out.Width = rule.Width
+	}
+	if rule.Height != 0 {
+		out.Height = rule.Height
+	}
+	if rule.Blur != 0 {
+		out.Blur = rule.Blur
+	}
+	if rule.Quality != 0 {
+		out.Quality = rule.Quality
+	}
+	if rule.Format != "" {
+		out.Format = rule.Format
+	}
+	return out
 }
 
 // parsePathTransform 解析路径中的转换后缀（@... 形式）。

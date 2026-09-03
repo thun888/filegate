@@ -95,17 +95,18 @@ type PathFilterConfig struct {
 
 // ClassFileConversionConfig 定义类别级别的文件转换配置。
 type ClassFileConversionConfig struct {
-	Rules               []string            `yaml:"rules"`                 // 可用的转换规则名称列表
-	EnableRequestParams RequestParamsConfig `yaml:"enable_request_params"` // 允许通过请求参数覆盖的转换选项（对 rules 内所有规则生效）
+	Rules               []string                `yaml:"rules"`                 // 可用的转换规则名称列表
+	DefaultParams       ConversionDefaultParams `yaml:"default_params"`        // 类别级默认参数值，规则 params 未设置对应字段时生效
+	EnableRequestParams RequestParamsConfig     `yaml:"enable_request_params"` // 允许通过请求参数覆盖的转换选项（对 rules 内所有规则生效）
 }
 
 // FileConversionRule 定义文件转换规则的完整配置。
 type FileConversionRule struct {
-	Name          string                  `yaml:"name"`           // 规则名称，用于在类别中引用
-	MaxFileSize   string                  `yaml:"max_file_size"`  // 最大文件大小限制，如"10MB"
-	Params        ConversionDefaultParams `yaml:"params"`         // 转换的默认参数值
-	ExtraParams   string                  `yaml:"extra_params"`   // 附加处理参数，按"/"拆分为选项段后原样前置到 imgproxy 处理 URL，如"strip_exif/w:600/q:50/f:avif"
-	Watermark     WatermarkConfig         `yaml:"watermark"`      // 水印配置
+	Name        string                  `yaml:"name"`          // 规则名称，用于在类别中引用
+	MaxFileSize string                  `yaml:"max_file_size"` // 最大文件大小限制，如"10MB"
+	Params      ConversionDefaultParams `yaml:"params"`        // 规则级参数值，覆盖类别 default_params 中已设置的对应字段
+	ExtraParams string                  `yaml:"extra_params"`  // 附加处理参数，按"/"拆分为选项段后原样前置到 imgproxy 处理 URL，如"strip_exif/w:600/q:50/f:avif"
+	Watermark   WatermarkConfig         `yaml:"watermark"`     // 水印配置
 }
 
 // RequestParamsConfig 定义可通过请求参数覆盖的转换选项。

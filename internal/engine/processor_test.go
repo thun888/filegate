@@ -538,6 +538,41 @@ func TestParseRequest_MultipleRulesPerClass(t *testing.T) {
 	}
 }
 
+// TestParseRequest_ClassDefaultParams 验证类别 default_params 作为基础、
+// 规则 params 中已设置的非零字段覆盖对应值的合并规则。
+func TestParseRequest_ClassDefaultParams(t *testing.T) {
+	processor := NewProcessor((&Router{conversionRules: map[string]config.FileConversionRule{
+		"png_conversion": {Name: "png_conversion", Params: config.ConversionDefaultParams{Width: 800}},
+	}}).FileConversionRule)
+
+	classCfg := config.ClassConfig{
+		FileConversion: config.ClassFileConversionConfig{
+			Rules: []string{"png_conversion"},
+			DefaultParams: config.ConversionDefaultParams{
+				Width:   100,
+				Height:  200,
+				Blur:    0.3,
+				Quality: 60,
+				Format:  "webp",
+			},
+			EnableRequestParams: fullRequestParams(),
+		},
+	}
+
+	// 规则覆盖 Width(800)，其余字段沿用类别默认值
+	_, opts, rule, err := processor.ParseRequest(classCfg, "images/demo.jpg", ruleQuery())
+	if err != nil {
+		t.Fatalf("ParseRequest() error = %v", err)
+	}
+	if rule.Name != "png_conversion" {
+		t.Fatalf("rule = %q, want png_conversion", rule.Name)
+	}
+	want := TransformOptions{Enabled: true, Width: 800, Height: 200, Blur: 0.3, Quality: 60, Format: "webp"}
+	if opts != want {
+		t.Fatalf("opts = %+v, want %+v", opts, want)
+	}
+}
+
 // TestParseRequest_QueryOverridesPathSuffix 锁定同名查询参数覆盖路径后缀值的优先级。
 func TestParseRequest_QueryOverridesPathSuffix(t *testing.T) {
 	processor := processorWithRule(fullTestRule())

@@ -82,6 +82,13 @@ namespaces:
         file_conversion:
           rules:
             - "png_conversion"
+          # 类别级默认参数：规则 params 未设置对应字段时生效（0 / 空视为未设置）
+          default_params:
+            width: 800
+            height: 600
+            blur: 0.5
+            quality: 80
+            format: "avif"
           enable_request_params:
             width:
               enabled: true

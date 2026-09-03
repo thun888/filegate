@@ -78,19 +78,22 @@ system.server.base_url    →  仅 imgproxy 链路使用；缺省时由 host:por
 ## 5. file_conversion 链路：三层引用 + 运行期交叉依赖
 
 ```
-class.file_conversion                             （类别级：可用规则白名单 + 参数开关）
+class.file_conversion                             （类别级：可用规则白名单 + 默认参数 + 参数开关）
     ├── rules[]    ──引用──►  file_conversion_rules[].name
+    ├── default_params：类别级默认参数（规则 params 未设置对应字段时生效，0 / 空视为未设置）
     └── enable_request_params：query/后缀参数覆盖开关 + 范围限制
           （对整个 file_conversion 生效，rules 内所有规则共享）
           ├── width/height/quality：enabled 开关 + min/max 范围限制
           └── blur/format：bool 开关
 
 file_conversion_rules[]                          （规则级：转换预设）
-    ├── params：未指定参数时的兜底值（blur 为高斯模糊 sigma，浮点）
+    ├── params：规则级参数值，覆盖类别 default_params 中已设置的对应字段
     ├── max_file_size：仅 imgproxy 链路使用（msfs 选项，启动时校验格式）
     └── watermark：enabled 时向 imgproxy 下发 wm: 选项
           （需要 imgproxy Pro 并在 imgproxy 端配置水印图；
            position/opacity 启动时校验）
+
+参数取值优先级：请求参数（query / 路径后缀）> 规则 params > 类别 default_params。
 
 规则选择（请求级）：路径后缀 !rulename 或 query rule=；
 两者冲突 → 400；均未指定 → 不做转换，按原始路径直接回源。
