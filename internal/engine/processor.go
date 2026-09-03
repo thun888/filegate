@@ -51,25 +51,29 @@ type pathTransform struct {
 
 // ParseRequest 解析请求路径和查询参数，返回源路径、转换选项与被选中的规则。
 // 规则通过路径后缀 !rulename 或查询参数 rule= 选择，两者冲突时报错；
-// 均未指定时不转换、原样返回路径。
+// 规则为可选：未选择时以类别 default_params 为基础转换。
+// 请求既未选规则又无 @ 转换后缀时不转换、原样返回路径。
 func (p *Processor) ParseRequest(classCfg config.ClassConfig, objectPath string, query url.Values) (string, TransformOptions, config.FileConversionRule, error) {
 	normalizedPath, err := utils.NormalizePath(objectPath)
 	if err != nil {
 		return "", TransformOptions{}, config.FileConversionRule{}, err
 	}
 
-	if len(classCfg.FileConversion.Rules) == 0 {
+	// 类别未配置转换能力（无可用规则且无类别默认参数）→ 原样返回
+	if len(classCfg.FileConversion.Rules) == 0 && !hasAnyDefaultParams(classCfg.FileConversion.DefaultParams) {
 		return normalizedPath, TransformOptions{}, config.FileConversionRule{}, nil
 	}
 
 	queryRule := strings.TrimSpace(query.Get("rule"))
-	if queryRule == "" && !strings.Contains(normalizedPath, "!") {
-		return normalizedPath, TransformOptions{}, config.FileConversionRule{}, nil
-	}
 
 	pt, err := parsePathTransform(normalizedPath)
 	if err != nil {
 		return "", TransformOptions{}, config.FileConversionRule{}, err
+	}
+
+	// 无转换意图（未选规则且路径无 @ 后缀）→ 原样返回
+	if queryRule == "" && pt.ruleName == "" && !strings.Contains(normalizedPath, "@") {
+		return normalizedPath, TransformOptions{}, config.FileConversionRule{}, nil
 	}
 
 	if queryRule != "" && pt.ruleName != "" && config.NormalizeKey(queryRule) != config.NormalizeKey(pt.ruleName) {
@@ -80,15 +84,15 @@ func (p *Processor) ParseRequest(classCfg config.ClassConfig, objectPath string,
 	if ruleName == "" {
 		ruleName = queryRule
 	}
-	if ruleName == "" {
-		return normalizedPath, TransformOptions{}, config.FileConversionRule{}, nil
+
+	rule := config.FileConversionRule{}
+	if ruleName != "" {
+		if !hasConversionRule(classCfg.FileConversion.Rules, ruleName) {
+			return "", TransformOptions{}, config.FileConversionRule{}, fmt.Errorf("conversion rule %q is not enabled for this class", ruleName)
+		}
+		rule = p.lookupRule(ruleName)
 	}
 
-	if !hasConversionRule(classCfg.FileConversion.Rules, ruleName) {
-		return "", TransformOptions{}, config.FileConversionRule{}, fmt.Errorf("conversion rule %q is not enabled for this class", ruleName)
-	}
-
-	rule := p.lookupRule(ruleName)
 	params := classCfg.FileConversion.EnableRequestParams
 	defaults := mergeConversionDefaults(classCfg.FileConversion.DefaultParams, rule.Params)
 	opts := TransformOptions{
@@ -188,6 +192,11 @@ func mergeConversionDefaults(base, rule config.ConversionDefaultParams) config.C
 		out.Format = rule.Format
 	}
 	return out
+}
+
+// hasAnyDefaultParams 判断类别默认参数是否至少设置了一项（0 / 空视为未设置）。
+func hasAnyDefaultParams(p config.ConversionDefaultParams) bool {
+	return p.Width != 0 || p.Height != 0 || p.Blur != 0 || p.Quality != 0 || p.Format != ""
 }
 
 // parsePathTransform 解析路径中的转换后缀（@... 形式）。

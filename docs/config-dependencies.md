@@ -15,7 +15,7 @@ namespaces[].class[]
    │     ├── signature.enabled        ──依赖──► signature.secret（必填）
    │     └── path_filter              （自包含，空配置 = 全部放行）
    ├── file_conversion.rules[]    ──引用──►  file_conversion_rules[].name
-   │     ├── 规则选择：路径后缀 !rulename 或 query rule=；均未指定 → 不做转换
+   │     ├── 规则选择：路径后缀 !rulename 或 query rule=（可选）；未选规则时用类别 default_params 转换
    │     ├── enable_request_params：对 file_conversion 内所有规则生效
    │     ├── 运行期 ──依赖──►  service.imgproxy.url（未配置则转换静默失效）
    │     └── service.imgproxy         ──依赖──►  system.server.base_url（生成 /origin/ 回源地址）
@@ -95,8 +95,9 @@ file_conversion_rules[]                          （规则级：转换预设）
 
 参数取值优先级：请求参数（query / 路径后缀）> 规则 params > 类别 default_params。
 
-规则选择（请求级）：路径后缀 !rulename 或 query rule=；
-两者冲突 → 400；均未指定 → 不做转换，按原始路径直接回源。
+规则选择（请求级）：路径后缀 !rulename 或 query rule=（可选）；
+两者冲突 → 400；未选规则时以类别 default_params 转换；
+既未选规则又无 @ 后缀 → 不做转换，按原始路径直接回源。
 ```
 
 **最重要的运行期依赖**：转换真正发生需要 `service.imgproxy.url` 非空。

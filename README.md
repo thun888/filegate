@@ -94,7 +94,7 @@ HEAD /fs/{namespace}/{class}/{objectPath}
 | `<数字>q`   | 图片质量，1–100             | `80q`             |
 | `.{格式}`   | 输出格式                   | `.webp`           |
 
-其中转换规则是必须指定的。宽度、高度等参数可以省略，省略时使用转换规则里的默认值。
+其中转换规则是可选的。宽度、高度等参数可以省略，省略时依次使用规则 `params`、类别 `default_params` 中的默认值。
 
 例如：
 
@@ -104,6 +104,9 @@ HEAD /fs/{namespace}/{class}/{objectPath}
 
 # 只指定高度和输出格式
 /fs/namespace1/class1/avatars/u1.png@!png_conversion_600h.avif
+
+# 不指定规则，仅覆盖宽度，其余参数取类别 default_params
+/fs/namespace1/class1/images/photo.jpg@320w
 ```
 
 也可以使用查询参数：

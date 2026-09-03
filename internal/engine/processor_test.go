@@ -469,16 +469,16 @@ func TestParseRequest_RuleSelector(t *testing.T) {
 		t.Fatalf("expected unknown rule error, got %v", err)
 	}
 
-	// 均未指定：不做转换，原样返回路径
+	// 未选规则：以类别 default_params 为基础转换（此类别未设默认值），路径后缀参数生效
 	sourcePath, opts, _, err = processor.ParseRequest(classCfg, "images/demo.jpg@320w", url.Values{})
 	if err != nil {
 		t.Fatalf("ParseRequest() error = %v", err)
 	}
-	if sourcePath != "images/demo.jpg@320w" {
-		t.Fatalf("sourcePath = %q, want %q", sourcePath, "images/demo.jpg@320w")
+	if sourcePath != "images/demo.jpg" {
+		t.Fatalf("sourcePath = %q, want %q", sourcePath, "images/demo.jpg")
 	}
-	if opts.Enabled {
-		t.Fatalf("expected no conversion, got opts=%+v", opts)
+	if !opts.Enabled || opts.Width != 320 {
+		t.Fatalf("expected conversion with width=320, got opts=%+v", opts)
 	}
 
 	// 类别未配置任何转换：同样原样返回
@@ -568,6 +568,43 @@ func TestParseRequest_ClassDefaultParams(t *testing.T) {
 		t.Fatalf("rule = %q, want png_conversion", rule.Name)
 	}
 	want := TransformOptions{Enabled: true, Width: 800, Height: 200, Blur: 0.3, Quality: 60, Format: "webp"}
+	if opts != want {
+		t.Fatalf("opts = %+v, want %+v", opts, want)
+	}
+}
+
+// TestParseRequest_NoRuleUsesClassDefaults 验证未选择规则时以类别 default_params
+// 为转换基础，路径后缀参数在其上覆盖。
+func TestParseRequest_NoRuleUsesClassDefaults(t *testing.T) {
+	processor := NewProcessor((&Router{conversionRules: map[string]config.FileConversionRule{
+		"png_conversion": {Name: "png_conversion", Params: config.ConversionDefaultParams{Quality: 80}},
+	}}).FileConversionRule)
+
+	classCfg := config.ClassConfig{
+		FileConversion: config.ClassFileConversionConfig{
+			Rules: []string{"png_conversion"},
+			DefaultParams: config.ConversionDefaultParams{
+				Width:   100,
+				Height:  200,
+				Quality: 60,
+				Format:  "webp",
+			},
+			EnableRequestParams: fullRequestParams(),
+		},
+	}
+
+	// 未选规则：类别默认参数生效，路径后缀 quality 覆盖
+	sourcePath, opts, rule, err := processor.ParseRequest(classCfg, "images/demo.jpg@90q", url.Values{})
+	if err != nil {
+		t.Fatalf("ParseRequest() error = %v", err)
+	}
+	if rule.Name != "" {
+		t.Fatalf("expected no rule selected, got %q", rule.Name)
+	}
+	if sourcePath != "images/demo.jpg" {
+		t.Fatalf("sourcePath = %q, want %q", sourcePath, "images/demo.jpg")
+	}
+	want := TransformOptions{Enabled: true, Width: 100, Height: 200, Blur: 0, Quality: 90, Format: "webp"}
 	if opts != want {
 		t.Fatalf("opts = %+v, want %+v", opts, want)
 	}
