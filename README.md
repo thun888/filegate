@@ -374,7 +374,7 @@ file_conversion_rules:
 
     max_file_size: "100MB"
 
-    default_params:
+    params:
       width: 800
       height: 600
       blur: 0.5
@@ -394,7 +394,7 @@ file_conversion_rules:
 
 `max_file_size` 只用于 imgproxy 链路。
 
-`default_params` 是请求没有指定对应参数时使用的值。
+`params` 是请求没有指定对应参数时使用的值。
 
 `extra_params` 会按照 `/` 拆分成参数段，并原样放到 imgproxy 处理 URL 中。
 

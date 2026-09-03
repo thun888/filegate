@@ -92,11 +92,11 @@ func (p *Processor) ParseRequest(classCfg config.ClassConfig, objectPath string,
 	params := classCfg.FileConversion.EnableRequestParams
 	opts := TransformOptions{
 		Enabled: true,
-		Width:   rule.DefaultParams.Width,
-		Height:  rule.DefaultParams.Height,
-		Blur:    max(0.0, rule.DefaultParams.Blur),
-		Quality: rule.DefaultParams.Quality,
-		Format:  strings.ToLower(strings.TrimPrefix(rule.DefaultParams.Format, ".")),
+		Width:   rule.Params.Width,
+		Height:  rule.Params.Height,
+		Blur:    max(0.0, rule.Params.Blur),
+		Quality: rule.Params.Quality,
+		Format:  strings.ToLower(strings.TrimPrefix(rule.Params.Format, ".")),
 	}
 
 	if pt.hasFormat && params.Format {

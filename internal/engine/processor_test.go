@@ -23,7 +23,7 @@ func fullRequestParams() config.RequestParamsConfig {
 func fullTestRule() config.FileConversionRule {
 	return config.FileConversionRule{
 		Name: "png_conversion",
-		DefaultParams: config.ConversionDefaultParams{
+		Params: config.ConversionDefaultParams{
 			Width:   800,
 			Height:  600,
 			Blur:    0.5,
@@ -56,7 +56,7 @@ func ruleQuery() url.Values {
 }
 
 // TestParseRequest_PathTransformSupportsPartialParams 测试路径变换语法对部分参数的支持。
-// 验证仅指定部分参数时，其余参数自动填充默认值（default_params）。
+// 验证仅指定部分参数时，其余参数自动填充默认值（params）。
 func TestParseRequest_PathTransformSupportsPartialParams(t *testing.T) {
 	processor := processorWithRule(fullTestRule())
 	classCfg := testClassConfig(fullRequestParams())
@@ -76,8 +76,8 @@ func TestParseRequest_PathTransformSupportsPartialParams(t *testing.T) {
 			objectPath:     "images/demo.jpg@320w",
 			wantSourcePath: "images/demo.jpg",
 			wantWidth:      320,
-			wantHeight:     600, // 未指定高度，使用 default_params.height
-			wantBlur:       0.5, // 未指定模糊，使用 default_params.blur
+			wantHeight:     600, // 未指定高度，使用 params.height
+			wantBlur:       0.5, // 未指定模糊，使用 params.blur
 			wantQuality:    80,
 			wantFormat:     "png",
 		},
@@ -496,8 +496,8 @@ func TestParseRequest_RuleSelector(t *testing.T) {
 // enable_request_params 对整个 file_conversion 生效（所有规则共享开关）。
 func TestParseRequest_MultipleRulesPerClass(t *testing.T) {
 	processor := NewProcessor((&Router{conversionRules: map[string]config.FileConversionRule{
-		"thumb": {Name: "thumb", DefaultParams: config.ConversionDefaultParams{Width: 100}},
-		"full":  {Name: "full", DefaultParams: config.ConversionDefaultParams{Width: 2000}},
+		"thumb": {Name: "thumb", Params: config.ConversionDefaultParams{Width: 100}},
+		"full":  {Name: "full", Params: config.ConversionDefaultParams{Width: 2000}},
 	}}).FileConversionRule)
 
 	classCfg := config.ClassConfig{

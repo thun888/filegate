@@ -86,7 +86,7 @@ class.file_conversion                             （类别级：可用规则白
           └── blur/format：bool 开关
 
 file_conversion_rules[]                          （规则级：转换预设）
-    ├── default_params：未指定参数时的兜底值（blur 为高斯模糊 sigma，浮点）
+    ├── params：未指定参数时的兜底值（blur 为高斯模糊 sigma，浮点）
     ├── max_file_size：仅 imgproxy 链路使用（msfs 选项，启动时校验格式）
     └── watermark：enabled 时向 imgproxy 下发 wm: 选项
           （需要 imgproxy Pro 并在 imgproxy 端配置水印图；
@@ -123,7 +123,7 @@ file_conversion_rules[]                          （规则级：转换预设）
 | `system.logging.level` | 归一化后未使用 |
 | `system.metrics.labels` | 未注入 Prometheus 指标 |
 
-注：`zip`（`default_params.zip` / `enable_request_params.zip`）已从配置结构**移除**——imgproxy
+注：`zip`（`params.zip` / `enable_request_params.zip`）已从配置结构**移除**——imgproxy
 没有对应的 zip 处理选项，保留会造成"配置了没效果"的误导；`watermark` 现已实现（见 §5）。
 `supported_formats` 也已移除——输出格式不再做白名单校验，仅受
 `enable_request_params.format` 开关控制。
