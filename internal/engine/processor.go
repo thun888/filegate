@@ -201,32 +201,64 @@ func parsePathTransform(normalizedPath string) (*pathTransform, error) {
 	pt.format = format
 	pt.hasFormat = hasFormat
 
-	seen := make(map[string]struct{}, 4)
-	for _, part := range strings.Split(paramsStr, "_") {
-		if part == "" {
-			return nil, fmt.Errorf("empty transform param segment in %q", normalizedPath)
-		}
-
-		if name, ok := ruleSelectorName(part); ok {
-			if pt.ruleName != "" {
-				return nil, fmt.Errorf("duplicate rule selector %q in %q", part, normalizedPath)
+	if paramsStr != "" {
+		parts := strings.Split(paramsStr, "_")
+		seen := make(map[string]struct{}, 4)
+		for i := 0; i < len(parts); {
+			part := parts[i]
+			if part == "" {
+				return nil, fmt.Errorf("empty transform param segment in %q", normalizedPath)
 			}
-			pt.ruleName = name
-			continue
-		}
 
-		field, value, ok := matchTransformPart(part)
-		if !ok {
-			return nil, fmt.Errorf("invalid transform param %q in %q", part, normalizedPath)
+			if ruleSel, ok := ruleSelectorName(part); ok {
+				if pt.ruleName != "" {
+					return nil, fmt.Errorf("duplicate rule selector %q in %q", part, normalizedPath)
+				}
+				pt.ruleName = ruleNameAt(parts, i, ruleSel)
+				i = ruleNameEnd(parts, i)
+				continue
+			}
+
+			field, value, ok := matchTransformPart(part)
+			if !ok {
+				return nil, fmt.Errorf("invalid transform param %q in %q", part, normalizedPath)
+			}
+			if _, dup := seen[field]; dup {
+				return nil, fmt.Errorf("duplicate transform param %q in %q", part, normalizedPath)
+			}
+			seen[field] = struct{}{}
+			pt.params = append(pt.params, transformParam{field, value})
+			i++
 		}
-		if _, dup := seen[field]; dup {
-			return nil, fmt.Errorf("duplicate transform param %q in %q", part, normalizedPath)
-		}
-		seen[field] = struct{}{}
-		pt.params = append(pt.params, transformParam{field, value})
 	}
 
 	return pt, nil
+}
+
+// ruleNameEnd 返回从 parts[start]（! 选择器段）起，规则名覆盖到的段下标（不含）。
+// 规则名向后并入后续段，直到遇到合法参数段或另一个选择器为止。
+func ruleNameEnd(parts []string, start int) int {
+	end := start + 1
+	for end < len(parts) {
+		if _, ok := ruleSelectorName(parts[end]); ok {
+			break
+		}
+		if _, _, ok := matchTransformPart(parts[end]); ok {
+			break
+		}
+		end++
+	}
+	return end
+}
+
+// ruleNameAt 组装从 parts[start] 起的规则名：选择器段去掉 ! 前缀，
+// 并以下划线并入后续属于该规则名的段。
+func ruleNameAt(parts []string, start int, first string) string {
+	end := ruleNameEnd(parts, start)
+	if end <= start+1 {
+		return first
+	}
+	return first + "_" + strings.Join(parts[start+1:end], "_")
 }
 
 // ruleSelectorName 判断参数段是否为 !rulename 形式的规则选择器。
@@ -238,8 +270,7 @@ func ruleSelectorName(part string) (string, bool) {
 }
 
 // splitTransformSpec 将 @ 之后的转换说明按 <params>.<format> 拆分。
-// 最后一个点之后必须是纯字母扩展名，且之前的部分为空或全部为合法参数段，
-// 才判定存在格式；否则返回整个 spec 作为参数部分（无格式）。
+// 最后一个点之后是纯字母扩展名时视为输出格式；否则整个 spec 作为参数部分（无格式）。
 func splitTransformSpec(spec string) (paramsStr, format string, hasFormat bool) {
 	lastDot := strings.LastIndex(spec, ".")
 	if lastDot < 0 {
@@ -251,35 +282,7 @@ func splitTransformSpec(spec string) (paramsStr, format string, hasFormat bool) 
 		return spec, "", false
 	}
 
-	paramsStr = spec[:lastDot]
-	if !transformParamsWellFormed(paramsStr) {
-		return spec, "", false
-	}
-
-	return paramsStr, format, true
-}
-
-// transformParamsWellFormed 判断参数部分是否全部为合法参数段
-// （空串视为合法，代表仅指定格式）。不做重复字段检查，
-// 重复由主解析循环报出更精确的错误。
-func transformParamsWellFormed(params string) bool {
-	if params == "" {
-		return true
-	}
-
-	for _, part := range strings.Split(params, "_") {
-		if part == "" {
-			return false
-		}
-		if _, ok := ruleSelectorName(part); ok {
-			continue
-		}
-		if _, _, ok := matchTransformPart(part); !ok {
-			return false
-		}
-	}
-
-	return true
+	return spec[:lastDot], format, true
 }
 
 // matchTransformPart 识别单个转换参数段，返回字段名与去除单位后的值。
