@@ -6,5 +6,4 @@
 - **内存映射**：对于 `namespaces` -> `class` 这种结构，在程序启动后，建议将其转换为 `map[string]map[string]Class`，这样在路由请求时可以实现 $O(1)$ 的查找速度，而不是每次去遍历切片。
 
 添加预设组
-max_file_size换算成字节
 统一的日志

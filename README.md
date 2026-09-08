@@ -143,21 +143,14 @@ go build -o filegate ./cmd/server/
 go build -ldflags="-s -w -X github.com/thun888/filegate/internal/server.Version=v1.2.3" ./cmd/server/
 ```
 
-GitHub Actions 会负责构建 Windows、Linux 和 macOS 下的 amd64 / arm64 版本，并生成 Release 产物。
-
 ## 快速开始
 
-先准备配置文件。可以直接复制：
+先准备配置文件
 
-```text
-config.example.yaml
+```bash
+mv config.example.yaml config.yaml
 ```
 
-为：
-
-```text
-config.yaml
-```
 
 一个最简单的本地文件配置如下：
 
@@ -179,13 +172,9 @@ namespaces:
     backend_policy: "default"
     class:
       - name: "images"
-        security:
-          path_filter:
-            allow_extensions: [jpg, png, webp]
-
 system:
   server:
-    host: 0.0.0.0
+    host: 127.0.0.1
     port: 8080
 ```
 
@@ -321,55 +310,65 @@ backend_policy:
 
 ```yaml
 namespaces:
-  - name: "namespace1"
-    backend_policy: "policy1"
+  - name: "namespace1"           # 命名空间名称
+    backend_policy: "policy1"    # 使用的后端策略
 
     class:
-      - name: "class1"
+      - name: "class1"           # 子类别
 
         security:
+          # Referer 检查：按 Referer 提取的域名匹配（忽略协议、端口、路径）
           refer_check:
             enabled: true
             allowed_referers:
-              - "example.com"
-              - "*.another.com"
-              - "*"
+              - "example.com"    # 精确域名
+              - "*.another.com"  # 泛域名，匹配所有子域名（不含基域名本身）
+              - "*"              # 单独的 * 放行所有域名
+            # 注意：enabled 为 true 但列表为空时，所有请求都会被拒绝（403）
 
+          # URL 签名（HMAC-SHA256），客户端通过 ?exp=<秒>&sign=<值> 传递，见“安全机制 - URL 签名”
           signature:
             enabled: true
-            secret: "xxxx"
-            expire: 300
+            secret: "xxxx"       # 签名密钥，启用时必填
+            expire: 300          # exp 允许的最大超前窗口（秒），0 表示不限制
 
+          # 路径过滤，检查顺序：deny_patterns → allow_paths → allow_extensions
           path_filter:
-            deny_patterns:
+            deny_patterns:       # 字面量子串匹配（非正则），路径包含任一条目即拒绝
               - "../"
               - ".git"
-            allow_paths:
+            allow_paths:         # 非空时，路径必须命中其中一个前缀
               - "images/"
               - "avatars/"
-            allow_extensions:
+            allow_extensions:    # 非空时，文件扩展名必须命中其中之一
               - "jpg"
               - "png"
               - "webp"
+            # 三项全为空表示全部放行
 
+        # 图片转换配置
         file_conversion:
-          rules:
+          rules:                 # 可用转换规则白名单，引用 file_conversion_rules[].name
             - "png_conversion"
 
+          # 类别级默认参数，规则 params 未设置对应字段时生效（0 / 空串视为未设置）
           default_params:
-            width: 800
-            height: 600
-            blur: 0.5
-            quality: 80
-            format: "avif"
+            width: 800           # 默认宽度（像素）
+            height: 600          # 默认高度（像素）
+            blur: 0.5            # 高斯模糊 sigma，0 表示不模糊
+            quality: 80          # 图片质量，1–100
+            format: "avif"       # 输出格式
 
+          # 允许通过请求（query / 路径后缀）覆盖的字段开关及取值范围
           enable_request_params:
             width: { enabled: true, min: 1, max: 8192 }
             height: { enabled: true, min: 1, max: 8192 }
             quality: { enabled: true, min: 10, max: 95 }
-            blur: true
+            blur: true           # blur 与 format 为 bool 开关
             format: true
+            # 未启用的字段会被静默忽略；取值超出 min/max 时返回 400
 
+        # 自定义响应头，文件访问成功时随响应一起返回
         response_headers:
           Cache-Control: "public,max-age=3600"
 ```
@@ -380,45 +379,50 @@ namespaces:
 
 ```yaml
 file_conversion_rules:
-  - name: "png_conversion"
+  - name: "png_conversion"    # 规则名称
 
+    # 源文件大小上限（如 "100MB"），用于 imgproxy 侧处理
+    # 不填写单位默认为字节
     max_file_size: "100MB"
 
+    # 规则级默认参数，覆盖类别 default_params 中已设置的对应字段（0 / 空串视为未设置）
     params:
-      width: 800
-      height: 600
-      blur: 0.5
-      quality: 80
-      format: "avif"
+      width: 800              # 默认宽度（像素）
+      height: 600             # 默认高度（像素）
+      blur: 0.5               # 高斯模糊 sigma，0 表示不模糊
+      quality: 80             # 图片质量，1–100
+      format: "avif"          # 输出格式
 
+    # 附加处理参数：按 "/" 拆分为选项段，原样前置到 imgproxy 处理 URL 开头（先于其他处理参数生效）
+    # 段内仅允许字母、数字与 _ : . - 字符，如 "strip_exif/w:600/q:50/f:avif"
     extra_params: ""
 
+    # 水印，需要在 imgproxy 端配置对应的水印图片
     watermark:
       enabled: true
-      opacity: 0.5
-      position: "soea"
-      x_offset: 0
-      y_offset: 0
-      scale: 0
+      opacity: 0.5            # 透明度，范围 [0,1]（启动时校验）
+      position: "soea"        # ce(居中), no(顶部), so(底部), ea(右边), we(左边), noea(右上), nowe(左上), soea(右下), sowe(左下), re(平铺), ch(棋盘格平铺)
+      x_offset: 0             # X 偏移：>=1 或 <=-1 为绝对像素值，(-1,1) 为相对值；position 为 re/ch 时表示瓦片间距
+      y_offset: 0             # Y 偏移：>=1 或 <=-1 为绝对像素值，(-1,1) 为相对值；position 为 re/ch 时表示瓦片间距
+      scale: 0                # 水印大小相对结果图片的比例，0 表示不改变大小
 ```
-
-`max_file_size` 只用于 imgproxy 链路。
 
 参数取值优先级：请求参数（query / 路径后缀）> 规则 `params` > 类别 `default_params`。
 规则 `params` 只覆盖类别 `default_params` 中已设置的对应字段（0 / 空视为未设置，沿用类别默认值）。
 
 `extra_params` 会按照 `/` 拆分成参数段，并原样放到 imgproxy 处理 URL 中。
 
-水印需要同时在 imgproxy 端准备对应的水印图片。
+水印需要同时在 imgproxy 端配置对应的水印图片。
 
 ### service / system
 
 ```yaml
 service:
   imgproxy:
-    url: ""
-    timeout: 20s
+    url: ""                 # imgproxy 服务地址，未配置时图片转换不生效，直接回源读原文件
+    timeout: 20s            # imgproxy 请求超时，<=0 时按默认 20s
 
+    # imgproxy URL 签名，enabled 时 key 与 salt 必填（启动校验），且须与 imgproxy 服务端一致
     signature:
       enabled: false
       key: ""
@@ -426,17 +430,17 @@ service:
 
 system:
   server:
-    base_url: "http://127.0.0.1:8080"
-    host: 0.0.0.0
-    port: 8080
-    debug: false
+    base_url: "http://127.0.0.1:8080"  # imgproxy 回源使用的地址，未配置时由 host:port 推导
+    host: 0.0.0.0                      # 监听地址
+    port: 8080                         # 监听端口
+    debug: false                       # true 用 gin.DebugMode，false 用 gin.ReleaseMode
 
   logging:
-    level: info
-    access_log: true
+    level: info      # 日志级别：debug, info, warn, error
+    access_log: true # 是否输出 Gin 访问日志
 
   metrics:
-    prometheus: true
+    prometheus: true # 是否启用 /metrics 端点
 ```
 
 `system.server.base_url` 是 imgproxy 回源时使用的地址。如果 FileGate 在容器或反向代理后面运行，这里应该填写 imgproxy 能访问到的地址，而不是随便填写一个客户端地址。
@@ -451,11 +455,11 @@ system:
 | -------------- | --------------------------------------- | --------------- |
 | `GET` / `HEAD` | `/fs/:namespace/:class/*objectPath`     | 文件访问，可选图片转换     |
 | `GET` / `HEAD` | `/origin/:namespace/:class/*objectPath` | 给 imgproxy 回源使用 |
-| `GET`          | `/ping`                                 | 返回版本信息          |
+| `GET`          | `/ping`                                 | 测试并返回版本信息          |
 | `GET`          | `/healthz`                              | 健康检查            |
 | `GET`          | `/metrics`                              | Prometheus 指标   |
 
-`/origin/` 是给 imgproxy 回源用的接口。它只进行路径过滤，不检查 Referer 和 URL 签名，所以应该在反向代理层限制访问来源。
+`/origin/` 是给 imgproxy 回源用的接口。它只进行路径过滤，不检查 Referer 和 URL 签名，应在反向代理层限制访问来源。
 
 常见响应头：
 
@@ -616,8 +620,5 @@ filegate_circuit_breaker_*
 │   ├── server/                 # Gin 服务、路由、Handler、imgproxy
 │   └── utils/                  # 路径处理、字节大小换算等
 ├── config.example.yaml         # 配置示例
-├── docs/config-dependencies.md # 配置字段依赖说明
 └── go.mod
 ```
-
-配置字段之间的依赖关系以及一些比较容易踩坑的边界情况，可以继续看 [`docs/config-dependencies.md`](docs/config-dependencies.md)。
