@@ -28,8 +28,8 @@ type PolicyEngine struct {
 	circuitBreakers map[string]*circuitBreaker
 }
 
-func NewPolicyEngine() *PolicyEngine {
-	initCircuitMetrics()
+func NewPolicyEngine(metricsRegisterer prometheus.Registerer) *PolicyEngine {
+	initCircuitMetrics(metricsRegisterer)
 
 	return &PolicyEngine{
 		rrState:         make(map[string]int),
@@ -37,8 +37,14 @@ func NewPolicyEngine() *PolicyEngine {
 	}
 }
 
-func initCircuitMetrics() {
-	// sync.Once 保证指标只注册一次，避免重复注册导致的 panic
+// initCircuitMetrics 创建并注册熔断器指标。
+// metricsRegisterer 为 nil 时回退到 prometheus.DefaultRegisterer；
+// sync.Once 保证指标只注册一次，避免重复注册导致的 panic。
+func initCircuitMetrics(metricsRegisterer prometheus.Registerer) {
+	if metricsRegisterer == nil {
+		metricsRegisterer = prometheus.DefaultRegisterer
+	}
+
 	circuitMetricsOnce.Do(func() {
 		circuitOpenTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "filegate",
@@ -61,14 +67,14 @@ func initCircuitMetrics() {
 			Help:      "Total number of requests rejected by circuit breaker state.",
 		}, []string{"backend", "state"})
 
-		registerCollector(circuitOpenTotal)
-		registerCollector(circuitHalfOpenSuccessTotal)
-		registerCollector(circuitRequestRejectedTotal)
+		registerCollector(metricsRegisterer, circuitOpenTotal)
+		registerCollector(metricsRegisterer, circuitHalfOpenSuccessTotal)
+		registerCollector(metricsRegisterer, circuitRequestRejectedTotal)
 	})
 }
 
-func registerCollector(c prometheus.Collector) {
-	if err := prometheus.Register(c); err != nil {
+func registerCollector(reg prometheus.Registerer, c prometheus.Collector) {
+	if err := reg.Register(c); err != nil {
 		if alreadyRegisteredErr, ok := err.(prometheus.AlreadyRegisteredError); ok {
 			switch registered := alreadyRegisteredErr.ExistingCollector.(type) {
 			case *prometheus.CounterVec:
@@ -111,6 +117,10 @@ func (e *PolicyEngine) RegisterBackend(name string, cfg config.CircuitBreakerCon
 		return
 	}
 
+	// 预创建该后端的全部指标标签组合（值为 0），使熔断器指标在首次事件发生前
+	// 就能被 Prometheus 抓取到——空的 CounterVec/HistogramVec 不会输出任何内容。
+	preCreateCircuitSeries(config.NormalizeKey(name))
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -118,6 +128,17 @@ func (e *PolicyEngine) RegisterBackend(name string, cfg config.CircuitBreakerCon
 		cfg:   cfg,
 		state: circuitStateClosed,
 	}
+}
+
+// preCreateCircuitSeries 为指定后端预创建熔断器指标的所有标签组合。
+// 覆盖代码中实际会出现的取值：open_total.from_state ∈ {closed, half_open}，
+// request_rejected_total.state ∈ {open, half_open}。
+func preCreateCircuitSeries(backendKey string) {
+	circuitOpenTotal.WithLabelValues(backendKey, string(circuitStateClosed))
+	circuitOpenTotal.WithLabelValues(backendKey, string(circuitStateHalfOpen))
+	circuitHalfOpenSuccessTotal.WithLabelValues(backendKey)
+	circuitRequestRejectedTotal.WithLabelValues(backendKey, string(circuitStateOpen))
+	circuitRequestRejectedTotal.WithLabelValues(backendKey, string(circuitStateHalfOpen))
 }
 
 // OrderedBackends 根据策略配置对后端列表进行排序，返回按策略确定的优先顺序排列的后端切片。
@@ -320,4 +341,3 @@ func normalizeCircuitConfig(cfg config.CircuitBreakerConfig) config.CircuitBreak
 
 	return cfg
 }
-

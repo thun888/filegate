@@ -15,6 +15,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/thun888/filegate/config"
@@ -103,7 +105,24 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 
-	policyEngine := engine.NewPolicyEngine()
+	// Prometheus 注册器：所有 FileGate 指标（熔断器 + HTTP 请求）统一注册到独立 registry，
+	// 避免与默认 registry 中其他库的指标混在一起。
+	metricsRegistry := prometheus.NewRegistry()
+	var metricsRegisterer prometheus.Registerer = metricsRegistry
+	if len(cfg.System.Metrics.Labels) > 0 {
+		// system.metrics.labels（如 service: filegate）作为常量标签附加到每个指标上，
+		// 便于多实例部署时在 Prometheus 中区分来源。
+		metricsRegisterer = prometheus.WrapRegistererWith(cfg.System.Metrics.Labels, metricsRegistry)
+	}
+
+	// Go runtime / process 指标（client_golang 默认只注册到 DefaultRegisterer，
+	// 这里显式注册到本 registry，使其同样携带自定义标签）。
+	metricsRegisterer.MustRegister(
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
+
+	policyEngine := engine.NewPolicyEngine(metricsRegisterer)
 
 	backendMap := make(map[string]backend.Backend, len(cfg.Backends))
 	backendCfgMap := make(map[string]config.BackendConfig, len(cfg.Backends))
@@ -132,6 +151,14 @@ func New(cfg *config.Config) (*Server, error) {
 	httpEngine.Use(requestID())
 	if cfg.System.Logging.AccessLog {
 		httpEngine.Use(gin.Logger())
+	}
+
+	// 请求级指标中间件：仅在启用 Prometheus 时挂载。
+	// 放在 Recovery 之前，使 panic→500 的请求也能被统计到。
+	var requestMetrics *httpMetrics
+	if cfg.System.Metrics.Prometheus {
+		requestMetrics = newHTTPMetrics(metricsRegisterer)
+		httpEngine.Use(requestMetrics.middleware())
 	}
 
 	httpEngine.Use(gin.Recovery())
@@ -183,7 +210,7 @@ func New(cfg *config.Config) (*Server, error) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": Version})
 	})
 	if cfg.System.Metrics.Prometheus {
-		httpEngine.GET("/metrics", gin.WrapH(promhttp.Handler()))
+		httpEngine.GET("/metrics", gin.WrapH(promhttp.HandlerFor(metricsRegistry, promhttp.HandlerOpts{})))
 	}
 
 	httpEngine.GET("/fs/:namespace/:class/*objectPath", s.handleFetch)

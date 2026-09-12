@@ -25,7 +25,7 @@ func (b *failingBackend) Fetch(_ context.Context, _ string) (*backend.Object, er
 }
 
 func TestPolicyEngine_CircuitBreakerOpenAfterThreshold(t *testing.T) {
-	engine := NewPolicyEngine()
+	engine := NewPolicyEngine(nil)
 	engine.RegisterBackend("b1", config.CircuitBreakerConfig{
 		FailureThreshold: 1,
 		RecoveryTimeout:  time.Hour,
