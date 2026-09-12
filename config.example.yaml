@@ -147,8 +147,8 @@ system:
     debug: false
     
   logging:
-    level: info
-    access_log: true
+    level: info        # 日志级别：debug, info, warn, error（非法值启动失败）
+    access_log: true   # 是否输出 Gin 访问日志（独立于 level）
 
   metrics:
     prometheus: true

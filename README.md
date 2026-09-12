@@ -436,8 +436,8 @@ system:
     debug: false                       # true 用 gin.DebugMode，false 用 gin.ReleaseMode
 
   logging:
-    level: info      # 日志级别：debug, info, warn, error
-    access_log: true # 是否输出 Gin 访问日志
+    level: info      # 日志级别：debug, info, warn, error（非法值启动失败）
+    access_log: true # 是否输出 Gin 访问日志（独立于 level）
 
   metrics:
     prometheus: true # 是否启用 /metrics 端点
@@ -546,25 +546,55 @@ photo.jpg@100w.jpg
 
 ## 可观测性
 
-FileGate 没有单独的日志系统，主要还是使用标准日志输出。
+FileGate 没有单独的日志框架，统一使用标准库 `log/slog` 向 stderr 输出文本日志，
+日志的收集、落盘和切割交给部署层（Docker / systemd / K8s）。
+级别由 `system.logging.level` 控制，量化指标另行通过 Prometheus `/metrics` 端点暴露。
+
+### 日志级别
+
+```yaml
+system:
+  logging:
+    level: info      # debug, info, warn, error
+```
+
+各级别对 FileGate 应用日志的作用：
+
+| 级别    | 输出内容                                   |
+| ------ | -------------------------------------- |
+| `debug` | 全部：每请求排障日志、启动配置转储、4xx/5xx 错误留痕      |
+| `info`  | 4xx/5xx 错误留痕（默认级别）                    |
+| `warn`  | 4xx/5xx 错误留痕                          |
+| `error` | 仅 5xx 错误留痕                            |
+
+其中 4xx 按 `warn` 记录、5xx 按 `error` 记录。
+级别值非法（例如 `trace`）时服务会直接启动失败。
 
 ### 请求 ID
 
 每个请求都会有一个 `X-Request-Id`。
 
-如果客户端已经提供，就直接使用；否则由 FileGate 生成。
+如果上游服务已经提供，就直接使用；否则由 FileGate 自身生成。
 
 日志会带上这个 ID，方便把同一个请求经过不同处理阶段的日志串起来。
 
 ### 调试模式
 
-设置：
+两种方式，效果等价（都把日志级别提到 `debug`）：
 
 ```bash
 export FILEGATE_DEBUG=1
 ```
 
-启动后，会额外输出当前实际生效的路由、后端和 imgproxy 配置，请求进入处理流程时也会打印更多信息。
+或者：
+
+```yaml
+system:
+  logging:
+    level: debug
+```
+
+此时启动后会额外输出当前实际生效的路由、后端和 imgproxy 配置，请求进入处理流程时也会打印更多信息。
 
 这个模式主要用于排查配置和请求问题。
 
@@ -578,7 +608,7 @@ system:
     access_log: true
 ```
 
-控制 Gin 的访问日志。
+控制是否输出 Gin 的访问日志。它是独立开关，不受 `level` 影响（`level: error` 时访问日志依然输出）。
 
 ### Prometheus
 

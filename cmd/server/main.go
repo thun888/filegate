@@ -2,12 +2,13 @@ package main
 
 import (
 	"flag"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
 
 	"github.com/thun888/filegate/config"
+	"github.com/thun888/filegate/internal/logging"
 	"github.com/thun888/filegate/internal/server"
 )
 
@@ -17,20 +18,37 @@ func main() {
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		slog.Error("load config", "error", err)
+		os.Exit(1)
 	}
+
+	level, err := logging.ParseLevel(cfg.System.Logging.Level)
+	if err != nil {
+		slog.Error("parse system.logging.level", "error", err)
+		os.Exit(1)
+	}
+	if os.Getenv("FILEGATE_DEBUG") != "" {
+		level = slog.LevelDebug
+	}
+	logger := logging.New(level, os.Stderr)
+	slog.SetDefault(logger)
 
 	// 初始化
 	srv, err := server.New(cfg)
 	if err != nil {
-		log.Fatalf("initialize server err: %v", err)
+		slog.Error("initialize server", "error", err)
+		os.Exit(1)
 	}
 
 	addr := net.JoinHostPort(cfg.System.Server.Host, strconv.Itoa(cfg.System.Server.Port))
-	log.Printf("FileGate %s listening on http://%s (FILEGATE_DEBUG=%q)", server.Version, addr, os.Getenv("FILEGATE_DEBUG"))
+	logger.Info("FileGate listening",
+		"version", server.Version,
+		"addr", "http://"+addr,
+		"filegate_debug", os.Getenv("FILEGATE_DEBUG"))
 
 	// 启动
 	if err := srv.Run(addr); err != nil {
-		log.Fatalf("run server err: %v", err)
+		slog.Error("run server", "error", err)
+		os.Exit(1)
 	}
 }

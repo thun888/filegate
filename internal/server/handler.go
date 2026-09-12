@@ -1,11 +1,12 @@
 package server
 
 import (
+	"context"
 	"embed"
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"math/rand/v2"
 	"net/http"
 	"os"
@@ -29,10 +30,6 @@ import (
 var resCodeImages embed.FS
 var Version = "dev"
 
-// debugLog 由环境变量 FILEGATE_DEBUG=1 控制。
-// 开启后：启动时输出内存中的全部路由/后端配置；每个请求进入处理链时输出排障日志。
-var debugLog = os.Getenv("FILEGATE_DEBUG") != ""
-
 // requestIDKey 是 Gin 上下文中存放请求 ID 的键。
 const requestIDKey = "filegate_request_id"
 
@@ -52,21 +49,22 @@ func requestID() gin.HandlerFunc {
 
 // logRequestf 输出带请求上下文（请求 ID、方法、路径、客户端 IP）的日志行。
 // 所有请求期日志统一走这里，保证格式一致、可按请求 ID 关联同一请求的多条日志。
-func logRequestf(c *gin.Context, format string, args ...any) {
+func logRequestf(c *gin.Context, level slog.Level, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
 	if c == nil || c.Request == nil {
-		log.Printf("%s", fmt.Sprintf(format, args...))
+		slog.Log(context.Background(), level, msg)
 		return
 	}
 	rid, _ := c.Get(requestIDKey)
-	log.Printf("[%v] %s %s client=%s | %s",
-		rid, c.Request.Method, c.Request.URL.Path, c.ClientIP(), fmt.Sprintf(format, args...))
+	slog.Log(c.Request.Context(), level, msg,
+		"request_id", rid,
+		"method", c.Request.Method,
+		"path", c.Request.URL.Path,
+		"client", c.ClientIP())
 }
 
-// debugf 仅在 FILEGATE_DEBUG=1 时输出请求期日志。
 func debugf(c *gin.Context, format string, args ...any) {
-	if debugLog {
-		logRequestf(c, format, args...)
-	}
+	logRequestf(c, slog.LevelDebug, format, args...)
 }
 
 // Server 封装了 FileGate 的 HTTP 服务。
@@ -135,6 +133,7 @@ func New(cfg *config.Config) (*Server, error) {
 	if cfg.System.Logging.AccessLog {
 		httpEngine.Use(gin.Logger())
 	}
+
 	httpEngine.Use(gin.Recovery())
 
 	s := &Server{
@@ -152,21 +151,30 @@ func New(cfg *config.Config) (*Server, error) {
 
 	// 启动时输出内存中实际生效的路由与后端配置，用于对照磁盘上的 config.yaml
 	// （无热加载：这里打出来的就是本次进程生命周期内真正生效的值）。
-	if debugLog {
-		for nsName, classes := range routeIndex.Routes() {
-			for clsName, rt := range classes {
-				log.Printf("[startup] route %s/%s policy=%q refer_check=%v signature=%v deny=%v allow_paths=%v allow_extensions=%v",
-					nsName, clsName, rt.Policy.Name,
-					rt.Class.Security.ReferCheck.Enabled, rt.Class.Security.Signature.Enabled,
-					rt.PathFilter.DenyPatterns(), rt.PathFilter.AllowPaths(), rt.PathFilter.AllowExtensions())
-			}
+	for nsName, classes := range routeIndex.Routes() {
+		for clsName, rt := range classes {
+			slog.Debug("startup route",
+				"route", nsName+"/"+clsName,
+				"policy", rt.Policy.Name,
+				"refer_check", rt.Class.Security.ReferCheck.Enabled,
+				"signature", rt.Class.Security.Signature.Enabled,
+				"deny", rt.PathFilter.DenyPatterns(),
+				"allow_paths", rt.PathFilter.AllowPaths(),
+				"allow_extensions", rt.PathFilter.AllowExtensions())
 		}
-		for _, bc := range backendCfgMap {
-			log.Printf("[startup] backend %s type=%s url_prefix=%s endpoint=%s bucket=%s root_path=%s",
-				bc.Name, bc.Type, bc.Config.URLPrefix, bc.Config.Endpoint, bc.Config.Bucket, bc.Config.RootPath)
-		}
-		log.Printf("[startup] imgproxy url=%q base_url=%q", cfg.Service.Imgproxy.URL, cfg.System.Server.BaseURL)
 	}
+	for _, bc := range backendCfgMap {
+		slog.Debug("startup backend",
+			"backend", bc.Name,
+			"type", bc.Type,
+			"url_prefix", bc.Config.URLPrefix,
+			"endpoint", bc.Config.Endpoint,
+			"bucket", bc.Config.Bucket,
+			"root_path", bc.Config.RootPath)
+	}
+	slog.Debug("startup imgproxy",
+		"url", cfg.Service.Imgproxy.URL,
+		"base_url", cfg.System.Server.BaseURL)
 
 	httpEngine.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "pong", "version": Version})
@@ -423,7 +431,11 @@ func (s *Server) handleOriginFetch(c *gin.Context) {
 func abortWithError(c *gin.Context, statusCode int, err error) {
 	// 所有 >=400 的错误响应一律留痕：来源层已由调用方写入 err 前缀
 	// （referer check / signature check / path filter / namespace not found / all backends failed）。
-	logRequestf(c, "abort -> %d: %v", statusCode, err)
+	level := slog.LevelWarn
+	if statusCode >= 500 {
+		level = slog.LevelError
+	}
+	logRequestf(c, level, "abort -> %d: %v", statusCode, err)
 
 	setNoCacheHeaders(c)
 
