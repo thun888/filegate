@@ -580,21 +580,13 @@ system:
 
 ### 调试模式
 
-两种方式，效果等价（都把日志级别提到 `debug`）：
+设置：
 
 ```bash
 export FILEGATE_DEBUG=1
 ```
 
-或者：
-
-```yaml
-system:
-  logging:
-    level: debug
-```
-
-此时启动后会额外输出当前实际生效的路由、后端和 imgproxy 配置，请求进入处理流程时也会打印更多信息。
+启动后，会额外输出当前实际生效的路由、后端和 imgproxy 配置，请求进入处理流程时也会打印更多信息。
 
 这个模式主要用于排查配置和请求问题。
 
@@ -608,7 +600,7 @@ system:
     access_log: true
 ```
 
-控制是否输出 Gin 的访问日志。它是独立开关，不受 `level` 影响（`level: error` 时访问日志依然输出）。
+控制 Gin 的访问日志。
 
 ### Prometheus
 
